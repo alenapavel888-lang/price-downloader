@@ -23,10 +23,11 @@ jobs:
           pip install requests yadisk playwright
           playwright install chromium
 
-      - name: Run price downloader
-        env:
-          YANDEX_TOKEN: ${{ secrets.YANDEX_TOKEN }}
-          RP_LOGIN: ${{ secrets.RP_LOGIN }}
-          RP_PASSWORD: ${{ secrets.RP_PASSWORD }}
-        run: |
-          python download_all.py
+- name: Run price downloader
+  env:
+    YANDEX_TOKEN: ${{ secrets.YANDEX_TOKEN }}
+    TD_PRICE_URL: ${{ secrets.TD_PRICE_URL }}
+    RP_LOGIN: ${{ secrets.RP_LOGIN }}
+    RP_PASSWORD: ${{ secrets.RP_PASSWORD }}
+  run: |
+    python download_all.py
