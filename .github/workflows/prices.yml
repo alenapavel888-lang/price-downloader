@@ -21,9 +21,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: |
-          pip install playwright pandas yadisk
-          playwright install chromium
+      run: |
+            pip install playwright pandas yadisk requests
+            playwright install chromium
 
       - name: Run price downloader
         run: python download_all.py
