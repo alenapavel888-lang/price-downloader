@@ -80,45 +80,47 @@ def download_rosholod_price():
 # ================== RP ==================
 
 def download_rp_price():
-    print("⬇️ RP: логинимся и скачиваем прайс")
+    print("⬇️ RP: логинимся и скачиваем прайс (xls)")
 
-    local_file = os.path.join(BASE_DIR, "rp_price.xlsx")
+    local_file = os.path.join(BASE_DIR, "rp_price.xls")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
 
-        # 1. Открываем страницу логина
+        # 1. Страница логина
         page.goto("https://dc.rp.ru/", timeout=60000)
 
-        # 2. Ждём поле логина (первое текстовое)
+        # 2. Логин
         page.wait_for_selector("input[type='text']", timeout=30000)
         page.locator("input[type='text']").first.fill(RP_LOGIN)
 
-        # 3. Ждём поле пароля
+        # 3. Пароль
         page.wait_for_selector("input[type='password']", timeout=30000)
         password = page.locator("input[type='password']").first
         password.fill(RP_PASSWORD)
 
-        # 4. 🔥 НАЖИМАЕМ ENTER (реальный сабмит формы)
+        # 4. Авторизация (Enter)
         password.press("Enter")
 
-        # 5. Ждём загрузку личного кабинета
-        page.wait_for_timeout(4000)
+        # 5. Ждём личный кабинет
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(3000)
 
         # 6. Наводим на "Прайс"
         page.hover("text=Прайс")
+        page.wait_for_timeout(1500)
 
-        # 7. Скачиваем Excel
+        # 7. Кликаем ТОЧНО по нужному пункту
         with page.expect_download(timeout=60000) as d:
-            page.locator("text=Excel").click()
+            page.locator("text=Прайс лист в формате xls").click()
 
         d.value.save_as(local_file)
         browser.close()
 
     today = datetime.now().strftime("%Y-%m-%d")
-    remote = f"/prices/rp/rp_{today}.xlsx"
+    remote = f"/prices/rp/rp_{today}.xls"
 
     upload_to_yandex(local_file, remote)
     print(f"✅ RP готов: {remote}")
