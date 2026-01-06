@@ -1,0 +1,33 @@
+name: Update price lists
+
+on:
+  schedule:
+    # 23:00 по Москве = 20:00 UTC
+    - cron: "0 20 * * *"
+
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install playwright pandas yadisk
+          playwright install chromium
+
+      - name: Run price downloader
+        run: python download_all.py
+        env:
+          YANDEX_TOKEN: ${{ secrets.YANDEX_TOKEN }}
+          EQUIP_LOGIN: ${{ secrets.EQUIP_LOGIN }}
+          EQUIP_PASSWORD: ${{ secrets.EQUIP_PASSWORD }}
