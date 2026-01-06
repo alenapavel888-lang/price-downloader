@@ -9,6 +9,7 @@ from playwright.sync_api import sync_playwright
 YANDEX_TOKEN = os.environ["YANDEX_TOKEN"]
 RP_LOGIN = os.environ["RP_LOGIN"]
 RP_PASSWORD = os.environ["RP_PASSWORD"]
+TD_PRICE_URL = os.environ["TD_PRICE_URL"]  # 👈 Торговый дизайн
 
 # ================== PATHS ==================
 
@@ -23,7 +24,7 @@ EQUIP_PRICE_URL = (
 )
 
 # ================== SMIRNOV ==================
-# ⬇️ ВСТАВЬ СЮДА ПРЯМУЮ ССЫЛКУ НА ФАЙЛ «С ОСТАТКАМИ НА СКЛАДАХ»
+
 SMIRNOV_PRICE_URL = "https://files.smirnov.ooo/Prays-list%20po%20ostatkam%20XLSX.xlsx"
 
 # ================== COMMON ==================
@@ -140,6 +141,24 @@ def download_smirnov_price():
     upload_to_yandex(local_file, remote)
     print(f"✅ Смирнов готов: {remote}")
 
+# ================== TRADE DESIGN ==================
+
+def download_td_price():
+    print("⬇️ Торговый дизайн: скачиваем по прямой ссылке (API)")
+
+    r = requests.get(TD_PRICE_URL, timeout=120)
+    r.raise_for_status()
+
+    local_file = os.path.join(BASE_DIR, "td_price.xlsx")
+    with open(local_file, "wb") as f:
+        f.write(r.content)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    remote = f"/prices/td/td_{today}.xlsx"
+
+    upload_to_yandex(local_file, remote)
+    print(f"✅ Торговый дизайн готов: {remote}")
+
 # ================== MAIN ==================
 
 def main():
@@ -147,6 +166,7 @@ def main():
     download_rosholod_price()
     download_rp_price()
     download_smirnov_price()
+    download_td_price()
 
 if __name__ == "__main__":
     main()
