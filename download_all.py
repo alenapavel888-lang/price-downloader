@@ -13,7 +13,7 @@ EQUIP_LOCAL_FILE = "equip_price.xlsx"
 EQUIP_YANDEX_DIR = "/prices/equip"
 
 # ---------- ROSHOLOD ----------
-ROSHOLOD_PRICE_URL = "ВСТАВЬ_ССЫЛКУ_РОСХОЛОД_ОСТАТКИ_XLS"
+ROSHOLOD_PRICE_URL = "https://rosholod.org/files/XML/Ostatki.xls"
 ROSHOLOD_LOCAL_FILE = "rosholod_ostatki.xls"
 ROSHOLOD_YANDEX_DIR = "/prices/rosholod"
 
