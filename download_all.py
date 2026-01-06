@@ -92,28 +92,22 @@ def download_rp_price():
         # 1. Открываем страницу логина
         page.goto("https://dc.rp.ru/", timeout=60000)
 
-        # 2. Ждём поле логина (первое текстовое поле)
+        # 2. Ждём поле логина (первое текстовое)
         page.wait_for_selector("input[type='text']", timeout=30000)
-        login_input = page.locator("input[type='text']").first
-        login_input.fill(RP_LOGIN)
+        page.locator("input[type='text']").first.fill(RP_LOGIN)
 
         # 3. Ждём поле пароля
         page.wait_for_selector("input[type='password']", timeout=30000)
-        password_input = page.locator("input[type='password']").first
-        password_input.fill(RP_PASSWORD)
+        password = page.locator("input[type='password']").first
+        password.fill(RP_PASSWORD)
 
-        # 4. Ждём кнопку "Авторизоваться" (submit)
-        page.wait_for_selector("input[type='submit']", timeout=30000)
-        submit_button = page.locator("input[type='submit']").first
-
-        # 🔥 важно: небольшой pause как у человека
-        page.wait_for_timeout(500)
-        submit_button.click()
+        # 4. 🔥 НАЖИМАЕМ ENTER (реальный сабмит формы)
+        password.press("Enter")
 
         # 5. Ждём загрузку личного кабинета
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(4000)
 
-        # 6. Наводим на пункт "Прайс"
+        # 6. Наводим на "Прайс"
         page.hover("text=Прайс")
 
         # 7. Скачиваем Excel
