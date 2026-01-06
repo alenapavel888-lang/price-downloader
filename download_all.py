@@ -7,9 +7,12 @@ from playwright.sync_api import sync_playwright
 # ================== SECRETS ==================
 
 YANDEX_TOKEN = os.environ["YANDEX_TOKEN"]
+
 RP_LOGIN = os.environ["RP_LOGIN"]
 RP_PASSWORD = os.environ["RP_PASSWORD"]
-TD_PRICE_URL = os.environ["TD_PRICE_URL"]  # 👈 Торговый дизайн
+
+TD_LOGIN = os.environ["TD_LOGIN"]
+TD_PASSWORD = os.environ["TD_PASSWORD"]
 
 # ================== PATHS ==================
 
@@ -85,7 +88,7 @@ def download_rosholod_price():
 # ================== RP ==================
 
 def download_rp_price():
-    print("⬇️ RP: логинимся и скачиваем прайс (xls)")
+    print("⬇️ RP: логинимся и скачиваем прайс")
 
     local_file = os.path.join(BASE_DIR, "rp_price.xls")
 
@@ -96,14 +99,9 @@ def download_rp_price():
 
         page.goto("https://dc.rp.ru/", timeout=60000)
 
-        page.wait_for_selector("input[type='text']", timeout=30000)
         page.locator("input[type='text']").first.fill(RP_LOGIN)
-
-        page.wait_for_selector("input[type='password']", timeout=30000)
-        password = page.locator("input[type='password']").first
-        password.fill(RP_PASSWORD)
-
-        password.press("Enter")
+        page.locator("input[type='password']").first.fill(RP_PASSWORD)
+        page.locator("input[type='password']").press("Enter")
 
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(3000)
@@ -126,7 +124,7 @@ def download_rp_price():
 # ================== SMIRNOV ==================
 
 def download_smirnov_price():
-    print("⬇️ Смирнов: остатки на складах (xlsx)")
+    print("⬇️ Смирнов: остатки на складах")
 
     r = requests.get(SMIRNOV_PRICE_URL, timeout=120)
     r.raise_for_status()
@@ -144,17 +142,35 @@ def download_smirnov_price():
 # ================== TRADE DESIGN ==================
 
 def download_td_price():
-    print("⬇️ Торговый дизайн: скачиваем по прямой ссылке (API)")
-
-    r = requests.get(TD_PRICE_URL, timeout=120)
-    r.raise_for_status()
+    print("⬇️ Торговый дизайн: логинимся и скачиваем прайс")
 
     local_file = os.path.join(BASE_DIR, "td_price.xlsx")
-    with open(local_file, "wb") as f:
-        f.write(r.content)
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(accept_downloads=True)
+        page = context.new_page()
+
+        page.goto("https://lk2.t-d.ru/lk/login", timeout=60000)
+
+        page.locator("input[type='text']").first.fill(TD_LOGIN)
+        page.locator("input[type='password']").first.fill(TD_PASSWORD)
+        page.locator("button:has-text('Войти')").click()
+
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(3000)
+
+        page.locator("text=Прайс-листы").click()
+        page.wait_for_timeout(2000)
+
+        with page.expect_download(timeout=60000) as d:
+            page.locator("text=Excel").first.click()
+
+        d.value.save_as(local_file)
+        browser.close()
 
     today = datetime.now().strftime("%Y-%m-%d")
-    remote = f"/prices/td/td_{today}.xlsx"
+    remote = f"/prices/trade_design/td_{today}.xlsx"
 
     upload_to_yandex(local_file, remote)
     print(f"✅ Торговый дизайн готов: {remote}")
