@@ -91,12 +91,11 @@ def download_rp_price():
 
         page.goto("https://dc.rp.ru/", timeout=60000)
 
-        # ⚠️ ВАЖНО: у RP нет name/id → берём input по порядку
-        inputs = page.locator("input")
-        inputs.nth(0).fill(RP_LOGIN)
-        inputs.nth(1).fill(RP_PASSWORD)
+        # 🔥 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ
+        page.locator("input[type='text']").first.fill(RP_LOGIN)
+        page.locator("input[type='password']").first.fill(RP_PASSWORD)
 
-        page.locator("text=Авторизоваться").click()
+        page.locator("input[type='submit'], text=Авторизоваться").first.click()
         page.wait_for_timeout(3000)
 
         page.hover("text=Прайс")
