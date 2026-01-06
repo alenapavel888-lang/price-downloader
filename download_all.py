@@ -1,7 +1,7 @@
 import os
 import time
 import yadisk
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
 YANDEX_TOKEN = os.environ.get("YANDEX_TOKEN")
 EQUIP_LOGIN = os.environ.get("EQUIP_LOGIN")
@@ -24,7 +24,7 @@ def ensure_folders(y):
 
 
 def download_equip():
-    print("🔐 Открываем сайт Equip")
+    print("🔐 Переходим на страницу логина Equip")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -34,45 +34,40 @@ def download_equip():
         context = browser.new_context()
         page = context.new_page()
 
+        # 1️⃣ ОТКРЫВАЕМ ЛОГИН-СТРАНИЦУ
         page.goto("https://equip.me/login", timeout=60000)
         page.wait_for_load_state("networkidle")
 
-        # 📸 диагностический скрин
         page.screenshot(path="equip_login.png", full_page=True)
 
-        print("✍️ Ищем поле логина")
-
-        if page.locator('input[type="email"]').count() > 0:
+        # 2️⃣ ИЩЕМ ПОЛЕ ЛОГИНА (ТОЛЬКО ЯВНЫЕ ВАРИАНТЫ)
+        if page.locator('input[type="email"]').is_visible():
             page.fill('input[type="email"]', EQUIP_LOGIN)
-        elif page.locator('input[name="login"]').count() > 0:
+        elif page.locator('input[name="login"]').is_visible():
             page.fill('input[name="login"]', EQUIP_LOGIN)
-        elif page.locator('input[name="username"]').count() > 0:
+        elif page.locator('input[name="username"]').is_visible():
             page.fill('input[name="username"]', EQUIP_LOGIN)
-        elif page.locator('input').count() > 0:
-            page.locator('input').first.fill(EQUIP_LOGIN)
         else:
-            raise Exception("❌ Поле логина не найдено")
+            raise Exception("❌ Не найдено поле логина на странице Equip")
 
-        time.sleep(1)
-
-        print("🔑 Ищем поле пароля")
-
-        if page.locator('input[type="password"]').count() > 0:
+        # 3️⃣ ПАРОЛЬ
+        if page.locator('input[type="password"]').is_visible():
             page.fill('input[type="password"]', EQUIP_PASSWORD)
         else:
-            raise Exception("❌ Поле пароля не найдено")
+            raise Exception("❌ Не найдено поле пароля на странице Equip")
 
-        time.sleep(1)
+        # 4️⃣ КНОПКА ВХОДА
+        page.locator("button[type=submit], button:has-text('Войти')").first.click()
 
-        print("➡️ Нажимаем кнопку входа")
+        # 5️⃣ ЖДЁМ ПЕРЕХОДА В КАБИНЕТ
+        try:
+            page.wait_for_url("**/catalog**", timeout=15000)
+            print("✅ Успешно вошли в личный кабинет Equip")
+        except PlaywrightTimeout:
+            page.screenshot(path="equip_login_failed.png", full_page=True)
+            raise Exception("❌ Не удалось подтвердить вход в Equip")
 
-        page.locator("button").first.click()
-        page.wait_for_timeout(8000)
-
-        # 📸 скрин после логина
         page.screenshot(path="equip_after_login.png", full_page=True)
-
-        print("✅ Попытка авторизации выполнена")
 
         browser.close()
 
@@ -87,7 +82,6 @@ def main():
         raise Exception("YANDEX_TOKEN невалиден")
 
     ensure_folders(y)
-
     download_equip()
 
 
