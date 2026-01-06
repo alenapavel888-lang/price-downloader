@@ -16,7 +16,11 @@ BASE_DIR = os.getcwd()
 
 # ================== EQUIP ==================
 
-EQUIP_PRICE_URL = "https://prices.equip.me/direct/v1/d269df604f27bffdb630eab3d46595d8/2543039075/1/msk/1/in_stock/ru/metric/price__.xlsx"
+EQUIP_PRICE_URL = (
+    "https://prices.equip.me/direct/v1/"
+    "d269df604f27bffdb630eab3d46595d8/"
+    "2543039075/1/msk/1/in_stock/ru/metric/price__.xlsx"
+)
 
 # ================== COMMON ==================
 
@@ -87,16 +91,18 @@ def download_rp_price():
 
         page.goto("https://dc.rp.ru/", timeout=60000)
 
-        page.fill("input[name='login']", RP_LOGIN)
-        page.fill("input[name='password']", RP_PASSWORD)
-        page.click("text=Авторизоваться")
+        # ⚠️ ВАЖНО: у RP нет name/id → берём input по порядку
+        inputs = page.locator("input")
+        inputs.nth(0).fill(RP_LOGIN)
+        inputs.nth(1).fill(RP_PASSWORD)
 
+        page.locator("text=Авторизоваться").click()
         page.wait_for_timeout(3000)
 
         page.hover("text=Прайс")
 
         with page.expect_download() as d:
-            page.click("text=Excel")
+            page.locator("text=Excel").click()
 
         d.value.save_as(local_file)
         browser.close()
