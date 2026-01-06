@@ -2,78 +2,107 @@ import os
 import requests
 import yadisk
 from datetime import datetime
+from playwright.sync_api import sync_playwright
 
 # ================== НАСТРОЙКИ ==================
 
 YANDEX_TOKEN = os.environ["YANDEX_TOKEN"]
 
-# ---------- EQUIP ----------
+RP_LOGIN = os.environ["RP_LOGIN"]
+RP_PASSWORD = os.environ["RP_PASSWORD"]
+
 EQUIP_PRICE_URL = "https://prices.equip.me/direct/v1/d269df604f27bffdb630eab3d46595d8/2543039075/1/msk/1/in_stock/ru/metric/price__.xlsx"
-EQUIP_LOCAL_FILE = "equip_price.xlsx"
-EQUIP_YANDEX_DIR = "/prices/equip"
 
-# ---------- ROSHOLOD ----------
-ROSHOLOD_PRICE_URL = "https://rosholod.org/files/XML/Ostatki.xls"
-ROSHOLOD_LOCAL_FILE = "rosholod_ostatki.xls"
-ROSHOLOD_YANDEX_DIR = "/prices/rosholod"
+ROSHOLOD_PRICE_URL = "https://rosholod.org/upload/ostatki.xls"  # <-- если ссылка изменится, заменишь тут
 
-# ================== ОБЩИЕ ФУНКЦИИ ==================
+# ================== YANDEX ==================
 
-def get_yandex():
-    return yadisk.YaDisk(token=YANDEX_TOKEN)
+y = yadisk.YaDisk(token=YANDEX_TOKEN)
 
-def ensure_dir(y, path):
+def ensure_dir(path):
     if not y.exists(path):
         y.mkdir(path)
 
-def upload_to_yandex(y, local_path, remote_path):
-    y.upload(local_path, remote_path, overwrite=True)
+def today():
+    return datetime.now().strftime("%Y-%m-%d")
 
 # ================== EQUIP ==================
 
-def download_equip_price(y):
-    print("⬇️ Скачиваем прайс Equip по прямой ссылке")
+def download_equip_price():
+    print("⬇️ Equip: скачиваем по прямой ссылке")
+    ensure_dir("/prices/equip")
 
-    response = requests.get(EQUIP_PRICE_URL, timeout=120)
-    response.raise_for_status()
+    r = requests.get(EQUIP_PRICE_URL, timeout=120)
+    r.raise_for_status()
 
-    with open(EQUIP_LOCAL_FILE, "wb") as f:
-        f.write(response.content)
+    local = "equip.xlsx"
+    with open(local, "wb") as f:
+        f.write(r.content)
 
-    ensure_dir(y, EQUIP_YANDEX_DIR)
+    remote = f"/prices/equip/equip_{today()}.xlsx"
+    y.upload(local, remote, overwrite=True)
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    remote_path = f"{EQUIP_YANDEX_DIR}/equip_{today}.xlsx"
-
-    upload_to_yandex(y, EQUIP_LOCAL_FILE, remote_path)
-    print(f"✅ Equip загружен: {remote_path}")
+    print("✅ Equip готов:", remote)
 
 # ================== ROSHOLOD ==================
 
-def download_rosholod_price(y):
-    print("⬇️ Скачиваем Остатки Росхолод")
+def download_rosholod_price():
+    print("⬇️ Росхолод: скачиваем остатки (xls)")
+    ensure_dir("/prices/rosholod")
 
-    response = requests.get(ROSHOLOD_PRICE_URL, timeout=120)
-    response.raise_for_status()
+    r = requests.get(ROSHOLOD_PRICE_URL, timeout=120)
+    r.raise_for_status()
 
-    with open(ROSHOLOD_LOCAL_FILE, "wb") as f:
-        f.write(response.content)
+    local = "rosholod.xls"
+    with open(local, "wb") as f:
+        f.write(r.content)
 
-    ensure_dir(y, ROSHOLOD_YANDEX_DIR)
+    remote = f"/prices/rosholod/rosholod_{today()}.xls"
+    y.upload(local, remote, overwrite=True)
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    remote_path = f"{ROSHOLOD_YANDEX_DIR}/rosholod_{today}.xls"
+    print("✅ Росхолод готов:", remote)
 
-    upload_to_yandex(y, ROSHOLOD_LOCAL_FILE, remote_path)
-    print(f"✅ Росхолод загружен: {remote_path}")
+# ================== RP ==================
+
+def download_rp_price():
+    print("⬇️ RP: авторизация и скачивание XLS")
+    ensure_dir("/prices/rp")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(accept_downloads=True)
+        page = context.new_page()
+
+        page.goto("https://dc.rp.ru/", timeout=60000)
+
+        page.fill("input[name='login']", RP_LOGIN)
+        page.fill("input[name='password']", RP_PASSWORD)
+        page.click("input[type='submit']")
+
+        page.wait_for_load_state("networkidle")
+
+        page.hover("text=Прайс")
+
+        with page.expect_download() as d:
+            page.click("text=XLS")
+
+        download = d.value
+        local = "rp.xls"
+        download.save_as(local)
+
+        browser.close()
+
+    remote = f"/prices/rp/rp_{today()}.xls"
+    y.upload(local, remote, overwrite=True)
+
+    print("✅ RP готов:", remote)
 
 # ================== MAIN ==================
 
 def main():
-    y = get_yandex()
-
-    download_equip_price(y)
-    download_rosholod_price(y)
+    download_equip_price()
+    download_rosholod_price()
+    download_rp_price()
 
 if __name__ == "__main__":
     main()
