@@ -2,9 +2,7 @@ name: Update price lists
 
 on:
   schedule:
-    # 23:00 по Москве = 20:00 UTC
-    - cron: "0 20 * * *"
-
+    - cron: "0 20 * * *"   # 23:00 по Москве = 20:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -21,9 +19,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-      run: |
-            pip install playwright pandas yadisk requests
-            playwright install chromium
+        run: |
+          pip install playwright pandas yadisk requests
+          playwright install chromium
 
       - name: Run price downloader
         run: python download_all.py
