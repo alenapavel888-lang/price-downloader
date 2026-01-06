@@ -1,89 +1,42 @@
 import os
-import time
+import requests
 import yadisk
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+from datetime import datetime
 
-YANDEX_TOKEN = os.environ.get("YANDEX_TOKEN")
-EQUIP_LOGIN = os.environ.get("EQUIP_LOGIN")
-EQUIP_PASSWORD = os.environ.get("EQUIP_PASSWORD")
+# === НАСТРОЙКИ ===
 
-YANDEX_ROOT = "/PRICE_SYSTEM"
+YANDEX_TOKEN = os.environ["YANDEX_TOKEN"]
 
+EQUIP_PRICE_URL = "https://prices.equip.me/direct/v1/d269df604f27bffdb630eab3d46595d8/2543039075/1/msk/1/in_stock/ru/metric/price__.xlsx"
 
-def ensure_folders(y):
-    folders = [
-        YANDEX_ROOT,
-        f"{YANDEX_ROOT}/raw",
-        f"{YANDEX_ROOT}/raw/equip",
-    ]
+LOCAL_FILE = "equip_price.xlsx"
+YANDEX_DIR = "/prices/equip"
 
-    for f in folders:
-        if not y.exists(f):
-            print(f"📁 Создаём папку {f}")
-            y.mkdir(f)
+# === ФУНКЦИИ ===
 
+def upload_to_yandex(local_path, remote_path):
+    y = yadisk.YaDisk(token=YANDEX_TOKEN)
+    if not y.exists(YANDEX_DIR):
+        y.mkdir(YANDEX_DIR)
+    y.upload(local_path, remote_path, overwrite=True)
 
-def download_equip():
-    print("🔐 Переходим на страницу логина Equip")
+def download_equip_price():
+    print("⬇️ Скачиваем прайс Equip по прямой ссылке")
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"]
-        )
-        context = browser.new_context()
-        page = context.new_page()
+    response = requests.get(EQUIP_PRICE_URL, timeout=120)
+    response.raise_for_status()
 
-        # 1️⃣ ОТКРЫВАЕМ ЛОГИН-СТРАНИЦУ
-        page.goto("https://equip.me/login", timeout=60000)
-        page.wait_for_load_state("networkidle")
+    with open(LOCAL_FILE, "wb") as f:
+        f.write(response.content)
 
-        page.screenshot(path="equip_login.png", full_page=True)
+    today = datetime.now().strftime("%Y-%m-%d")
+    remote_path = f"{YANDEX_DIR}/equip_{today}.xlsx"
 
-        # 2️⃣ ИЩЕМ ПОЛЕ ЛОГИНА (ТОЛЬКО ЯВНЫЕ ВАРИАНТЫ)
-        if page.locator('input[type="email"]').is_visible():
-            page.fill('input[type="email"]', EQUIP_LOGIN)
-        elif page.locator('input[name="login"]').is_visible():
-            page.fill('input[name="login"]', EQUIP_LOGIN)
-        elif page.locator('input[name="username"]').is_visible():
-            page.fill('input[name="username"]', EQUIP_LOGIN)
-        else:
-            raise Exception("❌ Не найдено поле логина на странице Equip")
-
-        # 3️⃣ ПАРОЛЬ
-        if page.locator('input[type="password"]').is_visible():
-            page.fill('input[type="password"]', EQUIP_PASSWORD)
-        else:
-            raise Exception("❌ Не найдено поле пароля на странице Equip")
-
-        # 4️⃣ КНОПКА ВХОДА
-        page.locator("button[type=submit], button:has-text('Войти')").first.click()
-
-        # 5️⃣ ЖДЁМ ПЕРЕХОДА В КАБИНЕТ
-        try:
-            page.wait_for_url("**/catalog**", timeout=15000)
-            print("✅ Успешно вошли в личный кабинет Equip")
-        except PlaywrightTimeout:
-            page.screenshot(path="equip_login_failed.png", full_page=True)
-            raise Exception("❌ Не удалось подтвердить вход в Equip")
-
-        page.screenshot(path="equip_after_login.png", full_page=True)
-
-        browser.close()
-
+    upload_to_yandex(LOCAL_FILE, remote_path)
+    print(f"✅ Прайс Equip загружен в Яндекс Диск: {remote_path}")
 
 def main():
-    if not YANDEX_TOKEN:
-        raise Exception("YANDEX_TOKEN не задан")
-
-    y = yadisk.YaDisk(token=YANDEX_TOKEN)
-
-    if not y.check_token():
-        raise Exception("YANDEX_TOKEN невалиден")
-
-    ensure_folders(y)
-    download_equip()
-
+    download_equip_price()
 
 if __name__ == "__main__":
     main()
