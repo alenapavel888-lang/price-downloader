@@ -22,6 +22,10 @@ EQUIP_PRICE_URL = (
     "2543039075/1/msk/1/in_stock/ru/metric/price__.xlsx"
 )
 
+# ================== SMIRNOV ==================
+# ⬇️ ВСТАВЬ СЮДА ПРЯМУЮ ССЫЛКУ НА ФАЙЛ «С ОСТАТКАМИ НА СКЛАДАХ»
+SMIRNOV_PRICE_URL = "https://files.smirnov.ooo/Prays-list%20po%20ostatkam%20XLSX.xlsx"
+
 # ================== COMMON ==================
 
 def upload_to_yandex(local_path, remote_path):
@@ -89,30 +93,23 @@ def download_rp_price():
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
 
-        # 1. Страница логина
         page.goto("https://dc.rp.ru/", timeout=60000)
 
-        # 2. Логин
         page.wait_for_selector("input[type='text']", timeout=30000)
         page.locator("input[type='text']").first.fill(RP_LOGIN)
 
-        # 3. Пароль
         page.wait_for_selector("input[type='password']", timeout=30000)
         password = page.locator("input[type='password']").first
         password.fill(RP_PASSWORD)
 
-        # 4. Авторизация (Enter)
         password.press("Enter")
 
-        # 5. Ждём личный кабинет
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(3000)
 
-        # 6. Наводим на "Прайс"
         page.hover("text=Прайс")
         page.wait_for_timeout(1500)
 
-        # 7. Кликаем ТОЧНО по нужному пункту
         with page.expect_download(timeout=60000) as d:
             page.locator("text=Прайс лист в формате xls").click()
 
@@ -125,12 +122,31 @@ def download_rp_price():
     upload_to_yandex(local_file, remote)
     print(f"✅ RP готов: {remote}")
 
+# ================== SMIRNOV ==================
+
+def download_smirnov_price():
+    print("⬇️ Смирнов: остатки на складах (xlsx)")
+
+    r = requests.get(SMIRNOV_PRICE_URL, timeout=120)
+    r.raise_for_status()
+
+    local_file = os.path.join(BASE_DIR, "smirnov_ostatki.xlsx")
+    with open(local_file, "wb") as f:
+        f.write(r.content)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    remote = f"/prices/smirnov/smirnov_{today}.xlsx"
+
+    upload_to_yandex(local_file, remote)
+    print(f"✅ Смирнов готов: {remote}")
+
 # ================== MAIN ==================
 
 def main():
     download_equip_price()
     download_rosholod_price()
     download_rp_price()
+    download_smirnov_price()
 
 if __name__ == "__main__":
     main()
