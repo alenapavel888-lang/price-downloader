@@ -89,18 +89,35 @@ def download_rp_price():
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
 
+        # 1. Открываем страницу логина
         page.goto("https://dc.rp.ru/", timeout=60000)
 
-        # 🔥 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ
-        page.locator("input[type='text']").first.fill(RP_LOGIN)
-        page.locator("input[type='password']").first.fill(RP_PASSWORD)
+        # 2. Ждём поле логина (первое текстовое поле)
+        page.wait_for_selector("input[type='text']", timeout=30000)
+        login_input = page.locator("input[type='text']").first
+        login_input.fill(RP_LOGIN)
 
-        page.locator("input[type='submit'], text=Авторизоваться").first.click()
+        # 3. Ждём поле пароля
+        page.wait_for_selector("input[type='password']", timeout=30000)
+        password_input = page.locator("input[type='password']").first
+        password_input.fill(RP_PASSWORD)
+
+        # 4. Ждём кнопку "Авторизоваться" (submit)
+        page.wait_for_selector("input[type='submit']", timeout=30000)
+        submit_button = page.locator("input[type='submit']").first
+
+        # 🔥 важно: небольшой pause как у человека
+        page.wait_for_timeout(500)
+        submit_button.click()
+
+        # 5. Ждём загрузку личного кабинета
         page.wait_for_timeout(3000)
 
+        # 6. Наводим на пункт "Прайс"
         page.hover("text=Прайс")
 
-        with page.expect_download() as d:
+        # 7. Скачиваем Excel
+        with page.expect_download(timeout=60000) as d:
             page.locator("text=Excel").click()
 
         d.value.save_as(local_file)
