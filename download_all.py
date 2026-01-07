@@ -156,16 +156,14 @@ def download_bio_price():
 
         page.wait_for_load_state("networkidle")
 
-        # 2. Переход в профиль
+        # 2. Профиль
         page.goto("https://portal.holdingbio.ru/personal/profile", timeout=60000)
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(3000)
 
-        # 3. Берём ПЕРВУЮ ссылку на XLS/XLSX (это BIO)
-        xls_link = page.locator("a[href$='.xls'], a[href$='.xlsx']").first
-
+        # 3. ЛОВИМ ЛЮБОЙ DOWNLOAD (BIO сам инициирует файл)
         with page.expect_download(timeout=60000) as d:
-            xls_link.click()
+            page.locator("text=XLS").first.click()
 
         d.value.save_as(local)
         browser.close()
