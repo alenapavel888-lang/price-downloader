@@ -3,6 +3,9 @@ import sqlite3
 import yadisk
 import pandas as pd
 import re
+import tempfile
+
+# ================== CONFIG ==================
 
 YANDEX_TOKEN = os.environ["YANDEX_TOKEN"]
 INDEX_DB = "index.db"
@@ -16,24 +19,37 @@ PRICES = {
     "bio": "/prices/bio/bio.xlsx",
 }
 
-def normalize(text):
+# ================== NORMALIZATION ==================
+
+def normalize(text: str) -> str:
     if not text:
         return ""
     text = text.lower().replace("ё", "е")
     text = re.sub(r"[^a-zа-я0-9 ]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
-def extract_numbers(text):
+def extract_numbers(text: str):
+    """
+    Извлекаем числа + единицы измерения из текста
+    """
     if not text:
         return []
     out = []
-    for m in re.findall(r"(\d+(?:[.,]\d+)?)\s*(кг|kg|л|l|мм|см|cm|kw|квт)?", text.lower()):
-        out.append((float(m[0].replace(",", ".")), m[1] or ""))
+    for m in re.findall(
+        r"(\d+(?:[.,]\d+)?)\s*(кг|kg|л|l|мм|см|cm|м|kw|квт|w)?",
+        text.lower()
+    ):
+        value = float(m[0].replace(",", "."))
+        unit = m[1] or ""
+        out.append((value, unit))
     return out
+
+# ================== DB ==================
 
 def init_db():
     conn = sqlite3.connect(INDEX_DB)
     cur = conn.cursor()
+
     cur.executescript("""
     DROP TABLE IF EXISTS items;
     DROP TABLE IF EXISTS tokens;
@@ -57,45 +73,22 @@ def init_db():
         value REAL,
         unit TEXT
     );
+
+    CREATE INDEX idx_items_name ON items(name_norm);
+    CREATE INDEX idx_tokens_token ON tokens(token);
+    CREATE INDEX idx_numbers_value ON numbers(value);
     """)
+
     conn.commit()
     return conn
 
-def build_index():
-    y = yadisk.YaDisk(token=YANDEX_TOKEN)
-    conn = init_db()
-    cur = conn.cursor()
+# ================== INDEX BUILDER ==================
 
-    for source, path in PRICES.items():
-        print(f"Читаем {source}")
-        local = f"/tmp/{source}.xlsx"
-        y.download(path, local)
-
-        df = pd.read_excel(local)
-
-        for _, row in df.iterrows():
-            name = str(row.get("Наименование") or row.get("name") or "")
-            article = str(row.get("Артикул") or row.get("article") or "")
-            if not name.strip():
-                continue
-
-            name_norm = normalize(name)
-            cur.execute(
-                "INSERT INTO items (source, article, name_raw, name_norm) VALUES (?,?,?,?)",
-                (source, article, name, name_norm),
-            )
-            item_id = cur.lastrowid
-
-            for token in name_norm.split():
-                cur.execute("INSERT INTO tokens VALUES (?,?)", (item_id, token))
-
-            for val, unit in extract_numbers(name):
-                cur.execute("INSERT INTO numbers VALUES (?,?,?)", (item_id, val, unit))
-
-        conn.commit()
-
-    conn.close()
-    print("Индекс создан")
-
-if __name__ == "__main__":
-    build_index()
+def read_excel_safely(path: str) -> pd.DataFrame:
+    """
+    Универсальное чтение xls/xlsx
+    """
+    try:
+        return pd.read_excel(path)
+    except Exception as e:
+        raise RuntimeError(f"Н
