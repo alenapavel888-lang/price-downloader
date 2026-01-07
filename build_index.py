@@ -5,8 +5,6 @@ import pandas as pd
 import re
 import tempfile
 
-# ================== CONFIG ==================
-
 YANDEX_TOKEN = os.environ["YANDEX_TOKEN"]
 INDEX_DB = "index.db"
 
@@ -19,29 +17,24 @@ PRICES = {
     "bio": "/prices/bio/bio.xlsx",
 }
 
-# ================== NORMALIZATION ==================
+# ================== HELPERS ==================
 
-def normalize(text: str) -> str:
+def normalize(text):
     if not text:
         return ""
-    text = text.lower().replace("ё", "е")
+    text = str(text).lower().replace("ё", "е")
     text = re.sub(r"[^a-zа-я0-9 ]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
-def extract_numbers(text: str):
-    """
-    Извлекаем числа + единицы измерения из текста
-    """
+def extract_numbers(text):
     if not text:
         return []
     out = []
     for m in re.findall(
-        r"(\d+(?:[.,]\d+)?)\s*(кг|kg|л|l|мм|см|cm|м|kw|квт|w)?",
-        text.lower()
+        r"(\d+(?:[.,]\d+)?)\s*(кг|kg|л|l|мм|см|cm|м|kw|квт)?",
+        str(text).lower()
     ):
-        value = float(m[0].replace(",", "."))
-        unit = m[1] or ""
-        out.append((value, unit))
+        out.append((float(m[0].replace(",", ".")), m[1] or ""))
     return out
 
 # ================== DB ==================
@@ -82,13 +75,86 @@ def init_db():
     conn.commit()
     return conn
 
-# ================== INDEX BUILDER ==================
+# ================== INDEX ==================
 
-def read_excel_safely(path: str) -> pd.DataFrame:
-    """
-    Универсальное чтение xls/xlsx
-    """
-    try:
-        return pd.read_excel(path)
-    except Exception as e:
-        raise RuntimeError(f"Н
+def build_index():
+    print("🧠 Строим индекс")
+    y = yadisk.YaDisk(token=YANDEX_TOKEN)
+
+    conn = init_db()
+    cur = conn.cursor()
+
+    for source, remote_path in PRICES.items():
+        print(f"\n📦 {source}")
+
+        if not y.exists(remote_path):
+            print(f"⚠️ Файл не найден: {remote_path}")
+            continue
+
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            local_path = tmp.name
+
+        try:
+            y.download(remote_path, local_path)
+            df = pd.read_excel(local_path)
+        except Exception as e:
+            print(f"❌ Ошибка чтения {source}: {e}")
+            continue
+        finally:
+            try:
+                os.unlink(local_path)
+            except Exception:
+                pass
+
+        print(f"   строк: {len(df)}")
+
+        for _, row in df.iterrows():
+            name = (
+                row.get("Наименование")
+                or row.get("name")
+                or row.get("Название")
+                or ""
+            )
+            article = (
+                row.get("Артикул")
+                or row.get("article")
+                or row.get("Код")
+                or ""
+            )
+
+            name = str(name).strip()
+            article = str(article).strip()
+
+            if not name:
+                continue
+
+            name_norm = normalize(name)
+
+            cur.execute(
+                "INSERT INTO items (source, article, name_raw, name_norm) VALUES (?,?,?,?)",
+                (source, article, name, name_norm),
+            )
+            item_id = cur.lastrowid
+
+            for token in name_norm.split():
+                cur.execute(
+                    "INSERT INTO tokens (item_id, token) VALUES (?,?)",
+                    (item_id, token),
+                )
+
+            for value, unit in extract_numbers(name):
+                cur.execute(
+                    "INSERT INTO numbers (item_id, value, unit) VALUES (?,?,?)",
+                    (item_id, value, unit),
+                )
+
+        conn.commit()
+        print(f"✅ {source} готов")
+
+    conn.close()
+    print("\n🎉 Индекс index.db успешно создан")
+
+# ================== ENTRY ==================
+
+if __name__ == "__main__":
+    build_index()
