@@ -136,73 +136,114 @@ def download_td_price():
     upload_to_yandex(local, f"/prices/trade_design/td_{today()}.xlsx")
     print("✅ Торговый дизайн готов")
 
-# ================== BIO (API → XLSX, ПРАВИЛЬНО) ==================
+# ================== BIO (API → XLSX, основной прайс) ==================
+
+BIO_API_BASE = "http://api.bioshop.ru:8030"
+
+def bio_post(endpoint: str, payload: dict):
+    r = requests.post(
+        f"{BIO_API_BASE}{endpoint}",
+        json=payload,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        timeout=(30, 300),
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def get_leaf_categories():
+    """Получаем ВСЕ конечные категории оборудования"""
+    payload = {
+        "login": BIO_LOGIN,
+        "password": BIO_PASSWORD,
+        "folderCode": "165729",  # Оборудование
+    }
+
+    root_categories = bio_post("/categories", payload)
+    leaf_ids = []
+
+    def walk(categories):
+        for cat in categories:
+            sub = cat.get("categories") or []
+            if sub:
+                walk(sub)
+            else:
+                if "id" in cat:
+                    leaf_ids.append(cat["id"])
+
+    walk(root_categories)
+    return list(set(leaf_ids))
+
+
+def get_products_by_category(category_id: str):
+    payload = {
+        "login": BIO_LOGIN,
+        "password": BIO_PASSWORD,
+        "categoryId": category_id,
+    }
+    try:
+        products = bio_post("/products", payload)
+        if isinstance(products, list):
+            return products
+    except Exception:
+        pass
+    return []
+
 
 def download_bio_price():
     print("⬇️ BIO (API → XLSX, основной прайс)")
 
-    headers = {
-        "Content-Type": "application/json; charset=utf-8",
-        "Accept": "application/json"
-    }
+    categories = get_leaf_categories()
+    if not categories:
+        raise Exception("BIO: не удалось получить категории")
 
-    # 1. Получаем категории (Оборудование)
-    r = requests.post(
-        "http://api.bioshop.ru:8030/categories",
-        json={
-            "login": BIO_LOGIN,
-            "password": BIO_PASSWORD,
-            "folderCode": "165729"  # оборудование
-        },
-        headers=headers,
-        timeout=60
-    )
-    r.raise_for_status()
-    categories = r.json()
+    print(f"📂 Категорий найдено: {len(categories)}")
 
     all_products = []
 
-    # 2. Для каждой категории — получаем товары
-    for cat in categories:
-        category_id = cat.get("id")
-        if not category_id:
-            continue
-
-        r = requests.post(
-            "http://api.bioshop.ru:8030/products",
-            json={
-                "login": BIO_LOGIN,
-                "password": BIO_PASSWORD,
-                "categoryId": category_id
-            },
-            headers=headers,
-            timeout=120
-        )
-        r.raise_for_status()
-        products = r.json()
-
-        if isinstance(products, list):
+    for idx, cat_id in enumerate(categories, 1):
+        print(f"📦 Категория {idx}/{len(categories)}")
+        products = get_products_by_category(cat_id)
+        if products:
             all_products.extend(products)
 
     if not all_products:
         raise Exception("BIO API: товары не получены")
 
-    # 3. XLSX
+    # ===== XLS =====
     wb = Workbook()
     ws = wb.active
     ws.title = "BIO price"
 
-    columns = list(all_products[0].keys())
+    columns = [
+        "code",
+        "name",
+        "fullName",
+        "brand",
+        "model",
+        "country",
+        "unit",
+        "inStock",
+        "inReserve",
+        "inAccess",
+        "receiptDate",
+        "dilerPriceRUB",
+        "priceRUB",
+        "deliveryTime",
+        "warranty",
+    ]
+
     ws.append(columns)
 
-    for item in all_products:
-        ws.append([item.get(col) for col in columns])
+    for p in all_products:
+        ws.append([p.get(col) for col in columns])
 
     local = os.path.join(BASE_DIR, "bio.xlsx")
     wb.save(local)
 
     upload_to_yandex(local, "/prices/bio/bio.xlsx")
-    print("✅ BIO готов (основной прайс)")
+
+    print(f"✅ BIO готов: товаров {len(all_products)}")
 
 # ================== MAIN ==================
 
