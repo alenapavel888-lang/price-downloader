@@ -147,7 +147,7 @@ def download_bio_price():
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
 
-        # 1. Логин
+        # 1. Login
         page.goto("https://portal.holdingbio.ru/login", timeout=60000)
 
         page.locator("input[type='text'], input[type='email']").first.fill(BIO_LOGIN)
@@ -156,20 +156,24 @@ def download_bio_price():
 
         page.wait_for_load_state("networkidle")
 
-        # 2. Профиль
+        # 2. Profile
         page.goto("https://portal.holdingbio.ru/personal/profile", timeout=60000)
         page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(5000)
 
-        # 3. ЛОВИМ ЛЮБОЙ DOWNLOAD (BIO сам инициирует файл)
+        # 3. ЛОВИМ ПЕРВЫЙ DOWNLOAD БЕЗ КЛИКА
         with page.expect_download(timeout=60000) as d:
-            page.locator("text=XLS").first.click()
+            page.evaluate("""
+                document.querySelectorAll('button, div, span')
+                  .forEach(el => el.click());
+            """)
 
         d.value.save_as(local)
         browser.close()
 
     upload_to_yandex(local, f"/prices/bio/bio_{today()}.xls")
     print("✅ BIO готов")
+
 
 # ================== MAIN ==================
 
