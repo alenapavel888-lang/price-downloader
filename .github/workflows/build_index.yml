@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install yadisk pandas openpyxl
+          pip install requests yadisk pandas openpyxl
 
       - name: Build index
         env:
