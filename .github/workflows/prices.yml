@@ -2,7 +2,7 @@ name: Update price lists
 
 on:
   schedule:
-    - cron: "0 20 * * *" # 23:00 по Москве
+    - cron: "0 20 * * *"
   workflow_dispatch:
 
 jobs:
@@ -26,8 +26,9 @@ jobs:
       - name: Run price downloader
         env:
           YANDEX_TOKEN: ${{ secrets.YANDEX_TOKEN }}
-          TD_PRICE_URL: ${{ secrets.TD_PRICE_URL }}
           RP_LOGIN: ${{ secrets.RP_LOGIN }}
           RP_PASSWORD: ${{ secrets.RP_PASSWORD }}
+          TD_LOGIN: ${{ secrets.TD_LOGIN }}
+          TD_PASSWORD: ${{ secrets.TD_PASSWORD }}
         run: |
           python download_all.py
