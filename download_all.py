@@ -152,21 +152,20 @@ def download_bio_price():
 
         page.locator("input[type='text'], input[type='email']").first.fill(BIO_LOGIN)
         page.locator("input[type='password']").first.fill(BIO_PASSWORD)
-        page.locator("button:has-text('Войти')").click()
+        page.locator("button").filter(has_text="Войти").click()
 
         page.wait_for_load_state("networkidle")
 
-        # 2. Переходим в профиль
+        # 2. Переход в профиль
         page.goto("https://portal.holdingbio.ru/personal/profile", timeout=60000)
         page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(3000)
 
-        # 3. Находим блок BIO и кликаем по XLS-иконке
-        bio_block = page.locator("text=BIO").first.locator("xpath=ancestor::div[contains(@class,'price')]")
-        xls_button = bio_block.locator("a[href$='.xls'], a[href$='.xlsx']").first
+        # 3. Берём ПЕРВУЮ ссылку на XLS/XLSX (это BIO)
+        xls_link = page.locator("a[href$='.xls'], a[href$='.xlsx']").first
 
         with page.expect_download(timeout=60000) as d:
-            xls_button.click()
+            xls_link.click()
 
         d.value.save_as(local)
         browser.close()
