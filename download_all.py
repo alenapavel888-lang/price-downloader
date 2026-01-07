@@ -3,6 +3,7 @@ import requests
 import yadisk
 from datetime import datetime
 from playwright.sync_api import sync_playwright
+from openpyxl import Workbook   # 👈 ДОБАВЛЕНО
 
 # ================== SECRETS ==================
 
@@ -14,7 +15,7 @@ RP_PASSWORD = os.environ["RP_PASSWORD"]
 BIO_LOGIN = os.environ["BIO_LOGIN"]
 BIO_PASSWORD = os.environ["BIO_PASSWORD"]
 
-TD_API_TOKEN = os.environ["TD_API_TOKEN"]  # 👈 ВАЖНО
+TD_API_TOKEN = os.environ["TD_API_TOKEN"]
 
 # ================== PATHS ==================
 
@@ -35,6 +36,8 @@ TD_API_URL = (
     "download-excel/with-filters/ka_nomenclature_td?extension=xlsx"
 )
 
+BIO_API_URL = "http://api.bioshop.ru:8030/products"
+
 # ================== HELPERS ==================
 
 def today():
@@ -54,7 +57,8 @@ def download_equip_price():
     r = requests.get(EQUIP_PRICE_URL, timeout=120)
     r.raise_for_status()
     local = os.path.join(BASE_DIR, "equip.xlsx")
-    open(local, "wb").write(r.content)
+    with open(local, "wb") as f:
+        f.write(r.content)
     upload_to_yandex(local, f"/prices/equip/equip_{today()}.xlsx")
     print("✅ Equip готов")
 
@@ -102,31 +106,28 @@ def download_smirnov_price():
     r = requests.get(SMIRNOV_PRICE_URL, timeout=120)
     r.raise_for_status()
     local = os.path.join(BASE_DIR, "smirnov.xlsx")
-    open(local, "wb").write(r.content)
+    with open(local, "wb") as f:
+        f.write(r.content)
     upload_to_yandex(local, f"/prices/smirnov/smirnov_{today()}.xlsx")
     print("✅ Смирнов готов")
 
-# ================== TRADE DESIGN (API) ==================
+# ================== TRADE DESIGN ==================
 
 def download_td_price():
-    print("⬇️ Торговый дизайн (API, long export)")
-
+    print("⬇️ Торговый дизайн (API)")
     headers = {
         "Authorization": f"Bearer {TD_API_TOKEN}",
         "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     }
-
-    # ⏳ ВАЖНО: stream + большой timeout
     r = requests.get(
         TD_API_URL,
         headers=headers,
         stream=True,
-        timeout=(30, 600),  # 30 сек на соединение, 10 минут на выгрузку
+        timeout=(30, 600),
     )
     r.raise_for_status()
 
     local = os.path.join(BASE_DIR, "trade_design.xlsx")
-
     with open(local, "wb") as f:
         for chunk in r.iter_content(chunk_size=1024 * 1024):
             if chunk:
@@ -135,37 +136,49 @@ def download_td_price():
     upload_to_yandex(local, f"/prices/trade_design/td_{today()}.xlsx")
     print("✅ Торговый дизайн готов")
 
-# ================== BIO (API) ==================
-
-BIO_API_URL = "http://api.bioshop.ru:8030/products"
+# ================== BIO (API → XLSX) ==================
 
 def download_bio_price():
-    print("⬇️ BIO (API)")
+    print("⬇️ BIO (API → XLSX)")
 
     payload = {
         "login": BIO_LOGIN,
-        "password": BIO_PASSWORD,
-        "download": True
+        "password": BIO_PASSWORD
     }
 
     headers = {
-        "Content-Type": "application/json; charset=utf-8"
+        "Content-Type": "application/json; charset=utf-8",
+        "Accept": "application/json"
     }
 
     r = requests.post(
         BIO_API_URL,
         json=payload,
         headers=headers,
-        timeout=(30, 300)  # 5 минут на выгрузку
+        timeout=(30, 300)
     )
     r.raise_for_status()
 
+    data = r.json()
+
+    if not isinstance(data, list) or not data:
+        raise Exception("BIO API вернул пустые данные")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "BIO price"
+
+    columns = list(data[0].keys())
+    ws.append(columns)
+
+    for item in data:
+        ws.append([item.get(col) for col in columns])
+
     local = os.path.join(BASE_DIR, "bio.xlsx")
-    with open(local, "wb") as f:
-        f.write(r.content)
+    wb.save(local)
 
     upload_to_yandex(local, f"/prices/bio/bio_{today()}.xlsx")
-    print("✅ BIO готов (API)")
+    print("✅ BIO готов (API → читаемый XLSX)")
 
 # ================== MAIN ==================
 
