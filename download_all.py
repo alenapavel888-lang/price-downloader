@@ -7,8 +7,12 @@ from playwright.sync_api import sync_playwright
 # ================== SECRETS ==================
 
 YANDEX_TOKEN = os.environ["YANDEX_TOKEN"]
+
 RP_LOGIN = os.environ["RP_LOGIN"]
 RP_PASSWORD = os.environ["RP_PASSWORD"]
+
+BIO_LOGIN = os.environ["BIO_LOGIN"]
+BIO_PASSWORD = os.environ["BIO_PASSWORD"]
 
 # ================== PATHS ==================
 
@@ -27,8 +31,8 @@ EQUIP_PRICE_URL = (
 SMIRNOV_PRICE_URL = "https://files.smirnov.ooo/Prays-list%20po%20ostatkam%20XLSX.xlsx"
 
 # ================== TRADE DESIGN ==================
-# ⚠️ ВАЖНО: прямая ссылка, без логина
-TD_PRICE_URL = "https://api.t-d.ru/api/ka-nomenclature/download-excel/with-filters/ka_nomenclature_td?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczpcL1wvYXBpLnQtZC5ydVwvYXBpXC9hdXRoLWZyb250XC9sb2dpbiIsImlhdCI6MTc2NzcyMTk4MywiZXhwIjoxNzY4MzI2NzgzLCJuYmYiOjE3Njc3MjE5ODMsImp0aSI6IkVLWmg4Y3dYdTJqSW5ONE4iLCJzdWIiOjQxNCwicHJ2IjoiMjNiZDVjODk0OWY2MDBhZGIzOWU3MDFjNDAwODcyZGI3YTU5NzZmNyJ9.k-JS3d7o9HF1U3R-d926ypbfTb7aigTJgfZaPd_D_tg&warehouses%5B0%5D=%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0&is_on_balance=true&extension=xlsx"
+
+TD_PRICE_URL = "https://api.t-d.ru/api/ka-nomenclature/download-excel/with-filters/ka_nomenclature_td?extension=xlsx"
 
 # ================== COMMON ==================
 
@@ -44,59 +48,53 @@ def upload_to_yandex(local_path, remote_path):
 # ================== EQUIP ==================
 
 def download_equip_price():
-    print("⬇️ Equip: скачиваем по прямой ссылке")
+    print("⬇️ Equip")
 
     r = requests.get(EQUIP_PRICE_URL, timeout=120)
     r.raise_for_status()
 
-    local_file = os.path.join(BASE_DIR, "equip_price.xlsx")
-    with open(local_file, "wb") as f:
-        f.write(r.content)
+    local = os.path.join(BASE_DIR, "equip.xlsx")
+    open(local, "wb").write(r.content)
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    upload_to_yandex(local_file, f"/prices/equip/equip_{today}.xlsx")
+    upload_to_yandex(local, f"/prices/equip/equip_{today()}.xlsx")
     print("✅ Equip готов")
 
 # ================== ROSHOLOD ==================
 
 def download_rosholod_price():
-    print("⬇️ Росхолод: остатки (xls)")
+    print("⬇️ Росхолод")
 
-    local_file = os.path.join(BASE_DIR, "rosholod_ostatki.xls")
+    local = os.path.join(BASE_DIR, "rosholod.xls")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(accept_downloads=True)
-        page = context.new_page()
-
-        page.goto("https://rosholod.org/downloads/price-lists/", timeout=60000)
+        page = browser.new_context(accept_downloads=True).new_page()
+        page.goto("https://rosholod.org/downloads/price-lists/")
 
         with page.expect_download() as d:
             page.locator("text=Остатки (xls)").first.click()
 
-        d.value.save_as(local_file)
+        d.value.save_as(local)
         browser.close()
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    upload_to_yandex(local_file, f"/prices/rosholod/rosholod_{today}.xls")
+    upload_to_yandex(local, f"/prices/rosholod/rosholod_{today()}.xls")
     print("✅ Росхолод готов")
 
 # ================== RP ==================
 
 def download_rp_price():
-    print("⬇️ RP: логинимся и скачиваем прайс")
+    print("⬇️ RP")
 
-    local_file = os.path.join(BASE_DIR, "rp_price.xls")
+    local = os.path.join(BASE_DIR, "rp.xls")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(accept_downloads=True)
-        page = context.new_page()
+        page = browser.new_context(accept_downloads=True).new_page()
 
-        page.goto("https://dc.rp.ru/", timeout=60000)
+        page.goto("https://dc.rp.ru/")
         page.locator("input[type='text']").first.fill(RP_LOGIN)
         page.locator("input[type='password']").first.fill(RP_PASSWORD)
-        page.locator("input[type='password']").press("Enter")
+        page.keyboard.press("Enter")
 
         page.wait_for_load_state("networkidle")
         page.hover("text=Прайс")
@@ -104,44 +102,73 @@ def download_rp_price():
         with page.expect_download() as d:
             page.locator("text=Прайс лист в формате xls").click()
 
-        d.value.save_as(local_file)
+        d.value.save_as(local)
         browser.close()
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    upload_to_yandex(local_file, f"/prices/rp/rp_{today}.xls")
+    upload_to_yandex(local, f"/prices/rp/rp_{today()}.xls")
     print("✅ RP готов")
 
 # ================== SMIRNOV ==================
 
 def download_smirnov_price():
-    print("⬇️ Смирнов: остатки")
+    print("⬇️ Смирнов")
 
     r = requests.get(SMIRNOV_PRICE_URL, timeout=120)
     r.raise_for_status()
 
-    local_file = os.path.join(BASE_DIR, "smirnov.xlsx")
-    with open(local_file, "wb") as f:
-        f.write(r.content)
+    local = os.path.join(BASE_DIR, "smirnov.xlsx")
+    open(local, "wb").write(r.content)
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    upload_to_yandex(local_file, f"/prices/smirnov/smirnov_{today}.xlsx")
+    upload_to_yandex(local, f"/prices/smirnov/smirnov_{today()}.xlsx")
     print("✅ Смирнов готов")
 
 # ================== TRADE DESIGN ==================
 
 def download_td_price():
-    print("⬇️ Торговый дизайн: скачиваем по прямой ссылке")
+    print("⬇️ Торговый дизайн")
 
     r = requests.get(TD_PRICE_URL, timeout=120)
     r.raise_for_status()
 
-    local_file = os.path.join(BASE_DIR, "trade_design.xlsx")
-    with open(local_file, "wb") as f:
-        f.write(r.content)
+    local = os.path.join(BASE_DIR, "td.xlsx")
+    open(local, "wb").write(r.content)
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    upload_to_yandex(local_file, f"/prices/trade_design/td_{today}.xlsx")
+    upload_to_yandex(local, f"/prices/trade_design/td_{today()}.xlsx")
     print("✅ Торговый дизайн готов")
+
+# ================== BIO ==================
+
+def download_bio_price():
+    print("⬇️ BIO")
+
+    local = os.path.join(BASE_DIR, "bio.xls")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_context(accept_downloads=True).new_page()
+
+        page.goto("https://portal.holdingbio.ru/login")
+        page.locator("input[type='text'], input[type='email']").first.fill(BIO_LOGIN)
+        page.locator("input[type='password']").first.fill(BIO_PASSWORD)
+        page.locator("button:has-text('Войти')").click()
+
+        page.wait_for_load_state("networkidle")
+        page.goto("https://portal.holdingbio.ru/personal/profile")
+        page.wait_for_load_state("networkidle")
+
+        with page.expect_download() as d:
+            page.locator("text=BIO").locator("xpath=..").locator("text=XLS").click()
+
+        d.value.save_as(local)
+        browser.close()
+
+    upload_to_yandex(local, f"/prices/bio/bio_{today()}.xls")
+    print("✅ BIO готов")
+
+# ================== HELPERS ==================
+
+def today():
+    return datetime.now().strftime("%Y-%m-%d")
 
 # ================== MAIN ==================
 
@@ -151,6 +178,7 @@ def main():
     download_rp_price()
     download_smirnov_price()
     download_td_price()
+    download_bio_price()
 
 if __name__ == "__main__":
     main()
