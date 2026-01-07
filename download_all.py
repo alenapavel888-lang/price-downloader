@@ -135,44 +135,37 @@ def download_td_price():
     upload_to_yandex(local, f"/prices/trade_design/td_{today()}.xlsx")
     print("✅ Торговый дизайн готов")
 
-# ================== BIO ==================
+# ================== BIO (API) ==================
+
+BIO_API_URL = "http://api.bioshop.ru:8030/products"
 
 def download_bio_price():
-    print("⬇️ BIO")
+    print("⬇️ BIO (API)")
 
-    local = os.path.join(BASE_DIR, "bio.xls")
+    payload = {
+        "login": BIO_LOGIN,
+        "password": BIO_PASSWORD,
+        "download": True
+    }
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(accept_downloads=True)
-        page = context.new_page()
+    headers = {
+        "Content-Type": "application/json; charset=utf-8"
+    }
 
-        # 1. Login
-        page.goto("https://portal.holdingbio.ru/login", timeout=60000)
-        page.locator("input[type='text'], input[type='email']").first.fill(BIO_LOGIN)
-        page.locator("input[type='password']").first.fill(BIO_PASSWORD)
-        page.locator("button").filter(has_text="Войти").click()
+    r = requests.post(
+        BIO_API_URL,
+        json=payload,
+        headers=headers,
+        timeout=(30, 300)  # 5 минут на выгрузку
+    )
+    r.raise_for_status()
 
-        page.wait_for_load_state("networkidle")
+    local = os.path.join(BASE_DIR, "bio.xlsx")
+    with open(local, "wb") as f:
+        f.write(r.content)
 
-        # 2. Profile
-        page.goto("https://portal.holdingbio.ru/personal/profile", timeout=60000)
-        page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(5000)
-
-        # 3. BIO → XLS (ПЕРВАЯ кнопка в карточке BIO)
-        with page.expect_download(timeout=60000) as d:
-            page.locator("text=BIO") \
-                .locator("xpath=ancestor::div[contains(@class,'price')]") \
-                .locator("button, div") \
-                .first \
-                .click()
-
-        d.value.save_as(local)
-        browser.close()
-
-    upload_to_yandex(local, f"/prices/bio/bio_{today()}.xls")
-    print("✅ BIO готов")
+    upload_to_yandex(local, f"/prices/bio/bio_{today()}.xlsx")
+    print("✅ BIO готов (API)")
 
 # ================== MAIN ==================
 
