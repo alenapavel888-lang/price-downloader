@@ -3,7 +3,7 @@ import requests
 import yadisk
 import smtplib
 from email.mime.text import MIMEText
-from datetime import datetime
+import traceback
 from playwright.sync_api import sync_playwright
 from openpyxl import Workbook
 
@@ -19,10 +19,17 @@ BIO_PASSWORD = os.environ["BIO_PASSWORD"]
 
 TD_API_TOKEN = os.environ["TD_API_TOKEN"]
 
-SMTP_HOST = os.environ["SMTP_HOST"]
-SMTP_PORT = int(os.environ["SMTP_PORT"])
-SMTP_USER = os.environ["SMTP_USER"]
-SMTP_PASSWORD = os.environ["SMTP_PASSWORD"]
+# ===== SMTP (ОПЦИОНАЛЬНО) =====
+
+SMTP_HOST = os.environ.get("SMTP_HOST")
+SMTP_PORT = os.environ.get("SMTP_PORT")
+SMTP_USER = os.environ.get("SMTP_USER")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
+
+SMTP_ENABLED = all([SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD])
+
+if SMTP_ENABLED:
+    SMTP_PORT = int(SMTP_PORT)
 
 # ================== PATHS ==================
 
@@ -55,10 +62,26 @@ def upload_to_yandex(local_path, remote_path):
     y.upload(local_path, remote_path, overwrite=True)
 
 
-def send_error_email(subject, message):
+def send_error_email(title: str, error: Exception):
+    if not SMTP_ENABLED:
+        print("📭 SMTP не настроен — письмо не отправлено")
+        return
+
+    body = f"""
+Ошибка при выгрузке прайса.
+
+Источник: {title}
+
+Ошибка:
+{str(error)}
+
+Traceback:
+{traceback.format_exc()}
+"""
+
     try:
-        msg = MIMEText(message, "plain", "utf-8")
-        msg["Subject"] = subject
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = f"[PRICE DOWNLOADER ERROR] {title}"
         msg["From"] = SMTP_USER
         msg["To"] = "pavel_yushin@bk.ru"
 
@@ -66,8 +89,11 @@ def send_error_email(subject, message):
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.send_message(msg)
-    except Exception as e:
-        print("⚠️ Ошибка отправки email:", e)
+
+        print("📧 Письмо об ошибке отправлено")
+
+    except Exception as mail_error:
+        print("⚠️ Ошибка отправки email:", mail_error)
 
 
 def safe_run(name, func):
@@ -76,12 +102,8 @@ def safe_run(name, func):
         func()
         print(f"✅ {name} завершён")
     except Exception as e:
-        error_text = f"{name} упал:\n\n{str(e)}"
-        print(f"❌ {error_text}")
-        send_error_email(
-            subject=f"Ошибка выгрузки прайса: {name}",
-            message=error_text
-        )
+        print(f"❌ {name} упал: {e}")
+        send_error_email(name, e)
 
 # ================== EQUIP ==================
 
@@ -89,7 +111,8 @@ def download_equip_price():
     r = requests.get(EQUIP_PRICE_URL, timeout=120)
     r.raise_for_status()
     local = os.path.join(BASE_DIR, "equip.xlsx")
-    open(local, "wb").write(r.content)
+    with open(local, "wb") as f:
+        f.write(r.content)
     upload_to_yandex(local, "/prices/equip/equip.xlsx")
 
 # ================== ROSHOLOD ==================
@@ -131,7 +154,8 @@ def download_smirnov_price():
     r = requests.get(SMIRNOV_PRICE_URL, timeout=120)
     r.raise_for_status()
     local = os.path.join(BASE_DIR, "smirnov.xlsx")
-    open(local, "wb").write(r.content)
+    with open(local, "wb") as f:
+        f.write(r.content)
     upload_to_yandex(local, "/prices/smirnov/smirnov.xlsx")
 
 # ================== TRADE DESIGN ==================
@@ -143,14 +167,16 @@ def download_td_price():
     }
     r = requests.get(TD_API_URL, headers=headers, stream=True, timeout=(30, 600))
     r.raise_for_status()
+
     local = os.path.join(BASE_DIR, "td.xlsx")
     with open(local, "wb") as f:
         for chunk in r.iter_content(1024 * 1024):
             if chunk:
                 f.write(chunk)
+
     upload_to_yandex(local, "/prices/trade_design/td.xlsx")
 
-# ================== BIO (API) ==================
+# ================== BIO (API → XLSX) ==================
 
 def bio_post(endpoint, payload):
     r = requests.post(
@@ -164,21 +190,28 @@ def bio_post(endpoint, payload):
 
 
 def download_bio_price():
-    payload = {"login": BIO_LOGIN, "password": BIO_PASSWORD, "folderCode": "165729"}
+    payload = {
+        "login": BIO_LOGIN,
+        "password": BIO_PASSWORD,
+        "folderCode": "165729",  # оборудование
+    }
+
     categories = bio_post("/categories", payload)
 
-    def walk(cats, out):
-        for c in cats:
-            sub = c.get("categories") or []
-            if sub:
-                walk(sub, out)
-            else:
-                out.append(c["id"])
-
     leaf_ids = []
-    walk(categories, leaf_ids)
+
+    def walk(cats):
+        for c in cats:
+            subs = c.get("categories") or []
+            if subs:
+                walk(subs)
+            else:
+                leaf_ids.append(c["id"])
+
+    walk(categories)
 
     products = []
+
     for cid in leaf_ids:
         res = bio_post("/products", {
             "login": BIO_LOGIN,
@@ -197,11 +230,13 @@ def download_bio_price():
 
     columns = list(products[0].keys())
     ws.append(columns)
+
     for p in products:
         ws.append([p.get(c) for c in columns])
 
     local = os.path.join(BASE_DIR, "bio.xlsx")
     wb.save(local)
+
     upload_to_yandex(local, "/prices/bio/bio.xlsx")
 
 # ================== MAIN ==================
