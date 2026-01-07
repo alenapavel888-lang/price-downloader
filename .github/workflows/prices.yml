@@ -28,5 +28,7 @@ jobs:
           YANDEX_TOKEN: ${{ secrets.YANDEX_TOKEN }}
           RP_LOGIN: ${{ secrets.RP_LOGIN }}
           RP_PASSWORD: ${{ secrets.RP_PASSWORD }}
+          BIO_LOGIN: ${{ secrets.BIO_LOGIN }}
+          BIO_PASSWORD: ${{ secrets.BIO_PASSWORD }}
         run: |
           python download_all.py
