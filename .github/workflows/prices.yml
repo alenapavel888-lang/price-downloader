@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install requests yadisk playwright
+          pip install requests yadisk playwright openpyxl
           playwright install chromium
 
       - name: Run price downloader
@@ -30,6 +30,6 @@ jobs:
           RP_PASSWORD: ${{ secrets.RP_PASSWORD }}
           BIO_LOGIN: ${{ secrets.BIO_LOGIN }}
           BIO_PASSWORD: ${{ secrets.BIO_PASSWORD }}
-          TD_API_TOKEN: ${{ secrets.TD_API_TOKEN }}   # 👈 ОБЯЗАТЕЛЬНО
+          TD_API_TOKEN: ${{ secrets.TD_API_TOKEN }}
         run: |
           python download_all.py
