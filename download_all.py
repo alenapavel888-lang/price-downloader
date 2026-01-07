@@ -109,18 +109,28 @@ def download_smirnov_price():
 # ================== TRADE DESIGN (API) ==================
 
 def download_td_price():
-    print("⬇️ Торговый дизайн (API)")
+    print("⬇️ Торговый дизайн (API, long export)")
 
     headers = {
         "Authorization": f"Bearer {TD_API_TOKEN}",
         "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     }
 
-    r = requests.get(TD_API_URL, headers=headers, timeout=120)
+    # ⏳ ВАЖНО: stream + большой timeout
+    r = requests.get(
+        TD_API_URL,
+        headers=headers,
+        stream=True,
+        timeout=(30, 600),  # 30 сек на соединение, 10 минут на выгрузку
+    )
     r.raise_for_status()
 
     local = os.path.join(BASE_DIR, "trade_design.xlsx")
-    open(local, "wb").write(r.content)
+
+    with open(local, "wb") as f:
+        for chunk in r.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                f.write(chunk)
 
     upload_to_yandex(local, f"/prices/trade_design/td_{today()}.xlsx")
     print("✅ Торговый дизайн готов")
