@@ -136,14 +136,16 @@ def download_td_price():
     upload_to_yandex(local, f"/prices/trade_design/td_{today()}.xlsx")
     print("✅ Торговый дизайн готов")
 
-# ================== BIO (API → XLSX) ==================
+# ================== BIO (API → XLSX, ПРАВИЛЬНО) ==================
 
 def download_bio_price():
-    print("⬇️ BIO (API → XLSX)")
+    print("⬇️ BIO (API → XLSX, промышленный)")
 
     payload = {
         "login": BIO_LOGIN,
-        "password": BIO_PASSWORD
+        "password": BIO_PASSWORD,
+        "page": 1,
+        "limit": 1000
     }
 
     headers = {
@@ -159,26 +161,44 @@ def download_bio_price():
     )
     r.raise_for_status()
 
-    data = r.json()
+    raw = r.json()
 
-    if not isinstance(data, list) or not data:
-        raise Exception("BIO API вернул пустые данные")
+    # ---- универсальный разбор ответа BIO ----
+    items = None
 
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, dict):
+        for key in ("items", "products", "rows", "data"):
+            val = raw.get(key)
+            if isinstance(val, list) and val:
+                items = val
+                break
+            if isinstance(val, dict):
+                for k2 in ("items", "rows"):
+                    if isinstance(val.get(k2), list) and val[k2]:
+                        items = val[k2]
+                        break
+
+    if not items:
+        raise Exception(f"BIO API вернул ответ без товаров: {raw}")
+
+    # ---- XLSX ----
     wb = Workbook()
     ws = wb.active
     ws.title = "BIO price"
 
-    columns = list(data[0].keys())
+    columns = sorted({k for item in items for k in item.keys()})
     ws.append(columns)
 
-    for item in data:
+    for item in items:
         ws.append([item.get(col) for col in columns])
 
     local = os.path.join(BASE_DIR, "bio.xlsx")
     wb.save(local)
 
-    upload_to_yandex(local, f"/prices/bio/bio_{today()}.xlsx")
-    print("✅ BIO готов (API → читаемый XLSX)")
+    upload_to_yandex(local, "/prices/bio/bio.xlsx")  # 👈 перезапись одного файла
+    print(f"✅ BIO готов ({len(items)} позиций)")
 
 # ================== MAIN ==================
 
