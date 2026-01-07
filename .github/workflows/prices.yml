@@ -31,5 +31,10 @@ jobs:
           BIO_LOGIN: ${{ secrets.BIO_LOGIN }}
           BIO_PASSWORD: ${{ secrets.BIO_PASSWORD }}
           TD_API_TOKEN: ${{ secrets.TD_API_TOKEN }}
+
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         run: |
           python download_all.py
