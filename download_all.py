@@ -149,7 +149,6 @@ def download_bio_price():
 
         # 1. Login
         page.goto("https://portal.holdingbio.ru/login", timeout=60000)
-
         page.locator("input[type='text'], input[type='email']").first.fill(BIO_LOGIN)
         page.locator("input[type='password']").first.fill(BIO_PASSWORD)
         page.locator("button").filter(has_text="Войти").click()
@@ -161,19 +160,19 @@ def download_bio_price():
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(5000)
 
-        # 3. ЛОВИМ ПЕРВЫЙ DOWNLOAD БЕЗ КЛИКА
+        # 3. BIO → XLS (ПЕРВАЯ кнопка в карточке BIO)
         with page.expect_download(timeout=60000) as d:
-            page.evaluate("""
-                document.querySelectorAll('button, div, span')
-                  .forEach(el => el.click());
-            """)
+            page.locator("text=BIO") \
+                .locator("xpath=ancestor::div[contains(@class,'price')]") \
+                .locator("button, div") \
+                .first \
+                .click()
 
         d.value.save_as(local)
         browser.close()
 
     upload_to_yandex(local, f"/prices/bio/bio_{today()}.xls")
     print("✅ BIO готов")
-
 
 # ================== MAIN ==================
 
