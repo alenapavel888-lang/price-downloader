@@ -139,66 +139,70 @@ def download_td_price():
 # ================== BIO (API → XLSX, ПРАВИЛЬНО) ==================
 
 def download_bio_price():
-    print("⬇️ BIO (API → XLSX, промышленный)")
-
-    payload = {
-        "login": BIO_LOGIN,
-        "password": BIO_PASSWORD,
-        "page": 1,
-        "limit": 1000
-    }
+    print("⬇️ BIO (API → XLSX, основной прайс)")
 
     headers = {
         "Content-Type": "application/json; charset=utf-8",
         "Accept": "application/json"
     }
 
+    # 1. Получаем категории (Оборудование)
     r = requests.post(
-        BIO_API_URL,
-        json=payload,
+        "http://api.bioshop.ru:8030/categories",
+        json={
+            "login": BIO_LOGIN,
+            "password": BIO_PASSWORD,
+            "folderCode": "165729"  # оборудование
+        },
         headers=headers,
-        timeout=(30, 300)
+        timeout=60
     )
     r.raise_for_status()
+    categories = r.json()
 
-    raw = r.json()
+    all_products = []
 
-    # ---- универсальный разбор ответа BIO ----
-    items = None
+    # 2. Для каждой категории — получаем товары
+    for cat in categories:
+        category_id = cat.get("id")
+        if not category_id:
+            continue
 
-    if isinstance(raw, list):
-        items = raw
-    elif isinstance(raw, dict):
-        for key in ("items", "products", "rows", "data"):
-            val = raw.get(key)
-            if isinstance(val, list) and val:
-                items = val
-                break
-            if isinstance(val, dict):
-                for k2 in ("items", "rows"):
-                    if isinstance(val.get(k2), list) and val[k2]:
-                        items = val[k2]
-                        break
+        r = requests.post(
+            "http://api.bioshop.ru:8030/products",
+            json={
+                "login": BIO_LOGIN,
+                "password": BIO_PASSWORD,
+                "categoryId": category_id
+            },
+            headers=headers,
+            timeout=120
+        )
+        r.raise_for_status()
+        products = r.json()
 
-    if not items:
-        raise Exception(f"BIO API вернул ответ без товаров: {raw}")
+        if isinstance(products, list):
+            all_products.extend(products)
 
-    # ---- XLSX ----
+    if not all_products:
+        raise Exception("BIO API: товары не получены")
+
+    # 3. XLSX
     wb = Workbook()
     ws = wb.active
     ws.title = "BIO price"
 
-    columns = sorted({k for item in items for k in item.keys()})
+    columns = list(all_products[0].keys())
     ws.append(columns)
 
-    for item in items:
+    for item in all_products:
         ws.append([item.get(col) for col in columns])
 
     local = os.path.join(BASE_DIR, "bio.xlsx")
     wb.save(local)
 
-    upload_to_yandex(local, "/prices/bio/bio.xlsx")  # 👈 перезапись одного файла
-    print(f"✅ BIO готов ({len(items)} позиций)")
+    upload_to_yandex(local, "/prices/bio/bio.xlsx")
+    print("✅ BIO готов (основной прайс)")
 
 # ================== MAIN ==================
 
