@@ -139,20 +139,38 @@ def download_td_price():
 
 def download_bio_price():
     print("⬇️ BIO")
+
     local = os.path.join(BASE_DIR, "bio.xls")
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_context(accept_downloads=True).new_page()
-        page.goto("https://portal.holdingbio.ru/login")
+        context = browser.new_context(accept_downloads=True)
+        page = context.new_page()
+
+        # 1. Логин
+        page.goto("https://portal.holdingbio.ru/login", timeout=60000)
+
         page.locator("input[type='text'], input[type='email']").first.fill(BIO_LOGIN)
         page.locator("input[type='password']").first.fill(BIO_PASSWORD)
         page.locator("button:has-text('Войти')").click()
+
         page.wait_for_load_state("networkidle")
-        page.goto("https://portal.holdingbio.ru/personal/profile")
-        with page.expect_download() as d:
-            page.locator("text=BIO").locator("xpath=..").locator("text=XLS").click()
+
+        # 2. Переходим в профиль
+        page.goto("https://portal.holdingbio.ru/personal/profile", timeout=60000)
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(2000)
+
+        # 3. Находим блок BIO и кликаем по XLS-иконке
+        bio_block = page.locator("text=BIO").first.locator("xpath=ancestor::div[contains(@class,'price')]")
+        xls_button = bio_block.locator("a[href$='.xls'], a[href$='.xlsx']").first
+
+        with page.expect_download(timeout=60000) as d:
+            xls_button.click()
+
         d.value.save_as(local)
         browser.close()
+
     upload_to_yandex(local, f"/prices/bio/bio_{today()}.xls")
     print("✅ BIO готов")
 
