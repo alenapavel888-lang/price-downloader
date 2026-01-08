@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install requests yadisk pandas openpyxl lxml playwright
+          pip install requests yadisk playwright openpyxl pandas lxml html5lib
           playwright install chromium
 
       - name: Run price downloader
