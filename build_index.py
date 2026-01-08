@@ -10,7 +10,7 @@ INDEX_DB = "index.db"
 
 PRICES = {
     "equip": "/prices/equip/equip.xlsx",
-    "rosholod": "/prices/rosholod/rosholod.xls",
+    "rosholod": "/prices/rosholod/rosholod.xlsx",
     "rp": "/prices/rp/rp.xls",
     "smirnov": "/prices/smirnov/smirnov.xlsx",
     "trade_design": "/prices/trade_design/td.xlsx",
