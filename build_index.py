@@ -96,7 +96,13 @@ def build_index():
 
         try:
             y.download(remote_path, local_path)
-            df = pd.read_excel(local_path)
+
+            # ⬇️ ВАЖНО: ЯВНО УКАЗЫВАЕМ ENGINE
+            if remote_path.lower().endswith(".xls"):
+                df = pd.read_excel(local_path, engine="xlrd")
+            else:
+                df = pd.read_excel(local_path, engine="openpyxl")
+
         except Exception as e:
             print(f"❌ Ошибка чтения {source}: {e}")
             continue
