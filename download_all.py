@@ -2,12 +2,12 @@ import os
 import requests
 import yadisk
 import smtplib
-from email.mime.text import MIMEText
 import traceback
+import zipfile
+import shutil
+from email.mime.text import MIMEText
 from playwright.sync_api import sync_playwright
 from openpyxl import Workbook
-import pandas as pd
-import tempfile
 
 # ================== SECRETS ==================
 
@@ -29,7 +29,6 @@ SMTP_USER = os.environ.get("SMTP_USER")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 
 SMTP_ENABLED = all([SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD])
-
 if SMTP_ENABLED:
     SMTP_PORT = int(SMTP_PORT)
 
@@ -63,7 +62,6 @@ def upload_to_yandex(local_path, remote_path):
         y.mkdir(remote_dir)
     y.upload(local_path, remote_path, overwrite=True)
 
-
 def send_error_email(title: str, error: Exception):
     if not SMTP_ENABLED:
         print("📭 SMTP не настроен — письмо не отправлено")
@@ -80,7 +78,6 @@ def send_error_email(title: str, error: Exception):
 Traceback:
 {traceback.format_exc()}
 """
-
     try:
         msg = MIMEText(body, "plain", "utf-8")
         msg["Subject"] = f"[PRICE DOWNLOADER ERROR] {title}"
@@ -93,10 +90,8 @@ Traceback:
             server.send_message(msg)
 
         print("📧 Письмо об ошибке отправлено")
-
     except Exception as mail_error:
         print("⚠️ Ошибка отправки email:", mail_error)
-
 
 def safe_run(name, func):
     print(f"▶️ {name}")
@@ -131,46 +126,59 @@ def download_rosholod_price():
         browser.close()
     upload_to_yandex(local, "/prices/rosholod/rosholod.xls")
 
-def download_rp_price():
-    print("📦 RP: открываем страницу прайса и парсим HTML")
+# ================== RP (ПРАВИЛЬНО) ==================
 
-    local_xlsx = os.path.join(BASE_DIR, "rp.xlsx")
+def download_rp_price():
+    print("📦 RP: скачиваем ZIP с прайсом")
+
+    zip_path = os.path.join(BASE_DIR, "rp.zip")
+    extract_dir = os.path.join(BASE_DIR, "rp_tmp")
+    final_xls = os.path.join(BASE_DIR, "rp.xls")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context()
+        context = browser.new_context(accept_downloads=True)
         page = context.new_page()
 
-        # 1️⃣ Логин
-        page.goto("https://dc.rp.ru/", wait_until="load")
-        page.locator("input[type='text']").first.fill(RP_LOGIN)
-        page.locator("input[type='password']").first.fill(RP_PASSWORD)
+        page.goto("https://dc.rp.ru/", timeout=60000)
+
+        page.fill("input[type='text']", RP_LOGIN)
+        page.fill("input[type='password']", RP_PASSWORD)
         page.click("text=Авторизоваться")
         page.wait_for_load_state("networkidle")
 
-        # 2️⃣ Переходим на страницу ПРАЙСА (ВАЖНО!)
         page.hover("text=Прайс")
-        page.click("text=Прайс")
-        page.wait_for_load_state("networkidle")
 
-        # 3️⃣ Берём HTML таблицу
-        html = page.content()
+        with page.expect_download() as d:
+            page.click("text=Прайс лист в формате xls")
+
+        download = d.value
+        download.save_as(zip_path)
         browser.close()
 
-    # 4️⃣ Парсим HTML таблицы
-    tables = pd.read_html(html)
+    print("📦 RP: ZIP скачан")
 
-    if not tables:
-        raise Exception("RP: HTML таблицы не найдены")
+    if os.path.exists(extract_dir):
+        shutil.rmtree(extract_dir)
+    os.mkdir(extract_dir)
 
-    df = tables[0]
+    with zipfile.ZipFile(zip_path, "r") as z:
+        z.extractall(extract_dir)
 
-    # 5️⃣ Сохраняем как нормальный XLSX
-    df.to_excel(local_xlsx, index=False)
+    xls_file = None
+    for f in os.listdir(extract_dir):
+        if f.lower().endswith(".xls"):
+            xls_file = os.path.join(extract_dir, f)
+            break
 
-    upload_to_yandex(local_xlsx, "/prices/rp/rp.xlsx")
+    if not xls_file:
+        raise Exception("❌ RP: в ZIP нет XLS файла")
 
-    print("✅ RP сохранён как rp.xlsx (нормальный Excel)")
+    shutil.move(xls_file, final_xls)
+
+    upload_to_yandex(final_xls, "/prices/rp/rp.xls")
+
+    print("✅ RP сохранён как rp.xls (оригинальный прайс)")
 
 # ================== SMIRNOV ==================
 
@@ -211,7 +219,6 @@ def bio_post(endpoint, payload):
     )
     r.raise_for_status()
     return r.json()
-
 
 def download_bio_price():
     payload = {
