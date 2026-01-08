@@ -131,50 +131,64 @@ def download_rosholod_price():
         browser.close()
     upload_to_yandex(local, "/prices/rosholod/rosholod.xls")
 
-# ================== RP ==================
+# ================== RP (ZIP → XLSX) ==================
+
+import zipfile
+from openpyxl import load_workbook
 
 def download_rp_price():
-    print("📥 RP: скачиваем HTML и конвертируем в XLSX")
+    print("📦 RP: скачиваем ZIP с прайсом")
 
-    local_html = os.path.join(BASE_DIR, "rp.html")
-    local_xlsx = os.path.join(BASE_DIR, "rp.xlsx")
+    zip_path = os.path.join(BASE_DIR, "rp.zip")
+    extract_dir = os.path.join(BASE_DIR, "rp_unpack")
+    final_xlsx = os.path.join(BASE_DIR, "rp.xlsx")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_context().new_page()
+        page = browser.new_context(accept_downloads=True).new_page()
 
-        page.goto("https://dc.rp.ru/", timeout=60000)
-
+        page.goto("https://dc.rp.ru/")
         page.locator("input[type='text']").first.fill(RP_LOGIN)
         page.locator("input[type='password']").first.fill(RP_PASSWORD)
         page.keyboard.press("Enter")
         page.wait_for_load_state("networkidle")
 
         page.hover("text=Прайс")
-        page.locator("text=Прайс лист в формате xls").click()
 
-        page.wait_for_timeout(3000)
+        with page.expect_download() as d:
+            page.locator("text=Прайс лист в формате xls").click()
 
-        html = page.content()
-        with open(local_html, "w", encoding="utf-8") as f:
-            f.write(html)
-
+        download = d.value
+        download.save_as(zip_path)
         browser.close()
 
-    # ⬇️ ПАРСИМ HTML КАК ТАБЛИЦУ
-    tables = pd.read_html(local_html)
-    if not tables:
-        raise Exception("RP: HTML таблицы не найдены")
+    print("📦 RP: ZIP скачан")
 
-    df = tables[0]
+    # 1️⃣ Распаковываем ZIP
+    os.makedirs(extract_dir, exist_ok=True)
 
-    # ⬇️ СОХРАНЯЕМ В НОРМАЛЬНЫЙ XLSX
-    df.to_excel(local_xlsx, index=False)
+    with zipfile.ZipFile(zip_path, "r") as z:
+        z.extractall(extract_dir)
 
-    # ⬇️ ГРУЗИМ НА ЯНДЕКС.ДИСК (ВАЖНО!)
-    upload_to_yandex(local_xlsx, "/prices/rp/rp.xlsx")
+    # 2️⃣ Ищем XLS внутри
+    xls_files = [
+        f for f in os.listdir(extract_dir)
+        if f.lower().endswith(".xls")
+    ]
+    if not xls_files:
+        raise Exception("RP: в ZIP нет XLS файла")
 
-    print("✅ RP сохранён как rp.xlsx")
+    xls_path = os.path.join(extract_dir, xls_files[0])
+
+    # 3️⃣ Пересохраняем XLS → XLSX
+    wb = load_workbook(xls_path)
+    wb.save(final_xlsx)
+
+    print("✅ RP: сохранён как rp.xlsx")
+
+    # 4️⃣ Загружаем в Яндекс.Диск
+    upload_to_yandex(final_xlsx, "/prices/rp/rp.xlsx")
+
 
 # ================== SMIRNOV ==================
 
