@@ -131,54 +131,50 @@ def download_rosholod_price():
         browser.close()
     upload_to_yandex(local, "/prices/rosholod/rosholod.xls")
 
-# ================== RP (HTML → XLSX) ==================
+# ================== RP ==================
 
 def download_rp_price():
-    print("⬇️ RP: скачиваем HTML и конвертируем в XLSX")
+    print("📥 RP: скачиваем HTML и конвертируем в XLSX")
+
+    local_html = os.path.join(BASE_DIR, "rp.html")
+    local_xlsx = os.path.join(BASE_DIR, "rp.xlsx")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(accept_downloads=True)
-        page = context.new_page()
+        page = browser.new_context().new_page()
 
-        page.goto("https://dc.rp.ru/")
+        page.goto("https://dc.rp.ru/", timeout=60000)
+
         page.locator("input[type='text']").first.fill(RP_LOGIN)
         page.locator("input[type='password']").first.fill(RP_PASSWORD)
         page.keyboard.press("Enter")
-
         page.wait_for_load_state("networkidle")
+
         page.hover("text=Прайс")
+        page.locator("text=Прайс лист в формате xls").click()
 
-        with page.expect_download() as d:
-            page.locator("text=Прайс лист в формате xls").click()
+        page.wait_for_timeout(3000)
 
-        download = d.value
-
-        with tempfile.TemporaryDirectory() as tmp:
-            fake_xls = os.path.join(tmp, "rp_fake.xls")
-            real_xlsx = os.path.join(tmp, "rp.xlsx")
-
-            # 1️⃣ сохраняем HTML под видом XLS
-            download.save_as(fake_xls)
-
-            # 2️⃣ читаем как HTML
-            tables = pd.read_html(fake_xls)
-            if not tables:
-                raise Exception("RP: HTML таблицы не найдены")
-
-            df = tables[0]
-            df = df.dropna(how="all")
-            df.columns = [str(c).strip() for c in df.columns]
-
-            # 3️⃣ сохраняем как НОРМАЛЬНЫЙ XLSX
-            df.to_excel(real_xlsx, index=False, engine="openpyxl")
-
-            # 4️⃣ загружаем в Яндекс.Диск
-            upload_to_yandex(real_xlsx, "/prices/rp/rp.xlsx")
+        html = page.content()
+        with open(local_html, "w", encoding="utf-8") as f:
+            f.write(html)
 
         browser.close()
 
-    print("✅ RP успешно преобразован в XLSX")
+    # ⬇️ ПАРСИМ HTML КАК ТАБЛИЦУ
+    tables = pd.read_html(local_html)
+    if not tables:
+        raise Exception("RP: HTML таблицы не найдены")
+
+    df = tables[0]
+
+    # ⬇️ СОХРАНЯЕМ В НОРМАЛЬНЫЙ XLSX
+    df.to_excel(local_xlsx, index=False)
+
+    # ⬇️ ГРУЗИМ НА ЯНДЕКС.ДИСК (ВАЖНО!)
+    upload_to_yandex(local_xlsx, "/prices/rp/rp.xlsx")
+
+    print("✅ RP сохранён как rp.xlsx")
 
 # ================== SMIRNOV ==================
 
