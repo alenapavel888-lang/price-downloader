@@ -77,6 +77,25 @@ def init_db():
 
 # ================== INDEX ==================
 
+def read_price_file(remote_path, local_path):
+    """
+    Универсальное чтение прайса:
+    1) XLS → xlrd
+    2) XLSX → openpyxl
+    3) HTML под видом XLS (RP) → read_html
+    """
+    try:
+        if remote_path.lower().endswith(".xls"):
+            return pd.read_excel(local_path, engine="xlrd")
+        else:
+            return pd.read_excel(local_path, engine="openpyxl")
+    except Exception:
+        # fallback для RP (HTML)
+        tables = pd.read_html(local_path)
+        if not tables:
+            raise Exception("HTML таблицы не найдены")
+        return tables[0]
+
 def build_index():
     print("🧠 Строим индекс")
     y = yadisk.YaDisk(token=YANDEX_TOKEN)
@@ -96,21 +115,7 @@ def build_index():
 
         try:
             y.download(remote_path, local_path)
-
-            try:
-                # 1️⃣ Пытаемся читать как Excel
-                if remote_path.lower().endswith(".xls"):
-                    df = pd.read_excel(local_path, engine="xlrd")
-                else:
-                    df = pd.read_excel(local_path, engine="openpyxl")
-
-            except Exception:
-                # 2️⃣ Если это HTML под видом XLS (RP) — читаем как HTML
-                tables = pd.read_html(local_path)
-                if not tables:
-                    raise Exception("HTML таблицы не найдены")
-                df = tables[0]
-
+            df = read_price_file(remote_path, local_path)
         except Exception as e:
             print(f"❌ Ошибка чтения {source}: {e}")
             continue
@@ -125,14 +130,14 @@ def build_index():
         for _, row in df.iterrows():
             name = (
                 row.get("Наименование")
-                or row.get("name")
                 or row.get("Название")
+                or row.get("name")
                 or ""
             )
             article = (
                 row.get("Артикул")
-                or row.get("article")
                 or row.get("Код")
+                or row.get("article")
                 or ""
             )
 
