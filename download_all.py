@@ -131,67 +131,46 @@ def download_rosholod_price():
         browser.close()
     upload_to_yandex(local, "/prices/rosholod/rosholod.xls")
 
-# ================== RP (ZIP → XLS → XLSX) ==================
-
-import zipfile
-import pandas as pd
-
 def download_rp_price():
-    print("📦 RP: скачиваем ZIP с прайсом")
+    print("📦 RP: открываем страницу прайса и парсим HTML")
 
-    zip_path = os.path.join(BASE_DIR, "rp.zip")
-    extract_dir = os.path.join(BASE_DIR, "rp_unpack")
-    final_xlsx = os.path.join(BASE_DIR, "rp.xlsx")
+    local_xlsx = os.path.join(BASE_DIR, "rp.xlsx")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_context(accept_downloads=True).new_page()
+        context = browser.new_context()
+        page = context.new_page()
 
-        page.goto("https://dc.rp.ru/")
+        # 1️⃣ Логин
+        page.goto("https://dc.rp.ru/", wait_until="load")
         page.locator("input[type='text']").first.fill(RP_LOGIN)
         page.locator("input[type='password']").first.fill(RP_PASSWORD)
-        page.keyboard.press("Enter")
+        page.click("text=Авторизоваться")
         page.wait_for_load_state("networkidle")
 
+        # 2️⃣ Переходим на страницу ПРАЙСА (ВАЖНО!)
         page.hover("text=Прайс")
+        page.click("text=Прайс")
+        page.wait_for_load_state("networkidle")
 
-        with page.expect_download() as d:
-            page.locator("text=Прайс лист в формате xls").click()
-
-        d.value.save_as(zip_path)
+        # 3️⃣ Берём HTML таблицу
+        html = page.content()
         browser.close()
 
-    print("📦 RP: ZIP скачан")
+    # 4️⃣ Парсим HTML таблицы
+    tables = pd.read_html(html)
 
-    # 1️⃣ Распаковываем ZIP
-    os.makedirs(extract_dir, exist_ok=True)
+    if not tables:
+        raise Exception("RP: HTML таблицы не найдены")
 
-    with zipfile.ZipFile(zip_path, "r") as z:
-        z.extractall(extract_dir)
+    df = tables[0]
 
-    # 2️⃣ Ищем XLS
-    xls_files = [
-        f for f in os.listdir(extract_dir)
-        if f.lower().endswith(".xls")
-    ]
+    # 5️⃣ Сохраняем как нормальный XLSX
+    df.to_excel(local_xlsx, index=False)
 
-    if not xls_files:
-        raise Exception("RP: в ZIP нет XLS файла")
+    upload_to_yandex(local_xlsx, "/prices/rp/rp.xlsx")
 
-    xls_path = os.path.join(extract_dir, xls_files[0])
-
-    print("📄 RP: читаем XLS через xlrd")
-
-    # 3️⃣ ЧИТАЕМ XLS ПРАВИЛЬНО
-    df = pd.read_excel(xls_path, engine="xlrd")
-
-    # 4️⃣ СОХРАНЯЕМ В XLSX
-    df.to_excel(final_xlsx, index=False, engine="openpyxl")
-
-    print("✅ RP: сохранён как rp.xlsx")
-
-    # 5️⃣ Загружаем в Яндекс.Диск
-    upload_to_yandex(final_xlsx, "/prices/rp/rp.xlsx")
+    print("✅ RP сохранён как rp.xlsx (нормальный Excel)")
 
 # ================== SMIRNOV ==================
 
