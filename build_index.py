@@ -97,11 +97,19 @@ def build_index():
         try:
             y.download(remote_path, local_path)
 
-            # ⬇️ ВАЖНО: ЯВНО УКАЗЫВАЕМ ENGINE
-            if remote_path.lower().endswith(".xls"):
-                df = pd.read_excel(local_path, engine="xlrd")
-            else:
-                df = pd.read_excel(local_path, engine="openpyxl")
+            try:
+                # 1️⃣ Пытаемся читать как Excel
+                if remote_path.lower().endswith(".xls"):
+                    df = pd.read_excel(local_path, engine="xlrd")
+                else:
+                    df = pd.read_excel(local_path, engine="openpyxl")
+
+            except Exception:
+                # 2️⃣ Если это HTML под видом XLS (RP) — читаем как HTML
+                tables = pd.read_html(local_path)
+                if not tables:
+                    raise Exception("HTML таблицы не найдены")
+                df = tables[0]
 
         except Exception as e:
             print(f"❌ Ошибка чтения {source}: {e}")
