@@ -189,7 +189,6 @@ def download_rp_price():
     # 4️⃣ Загружаем в Яндекс.Диск
     upload_to_yandex(final_xlsx, "/prices/rp/rp.xlsx")
 
-
 # ================== SMIRNOV ==================
 
 def download_smirnov_price():
