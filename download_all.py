@@ -131,10 +131,10 @@ def download_rosholod_price():
         browser.close()
     upload_to_yandex(local, "/prices/rosholod/rosholod.xls")
 
-# ================== RP (ZIP → XLSX) ==================
+# ================== RP (ZIP → XLS → XLSX) ==================
 
 import zipfile
-from openpyxl import load_workbook
+import pandas as pd
 
 def download_rp_price():
     print("📦 RP: скачиваем ZIP с прайсом")
@@ -158,8 +158,7 @@ def download_rp_price():
         with page.expect_download() as d:
             page.locator("text=Прайс лист в формате xls").click()
 
-        download = d.value
-        download.save_as(zip_path)
+        d.value.save_as(zip_path)
         browser.close()
 
     print("📦 RP: ZIP скачан")
@@ -170,23 +169,28 @@ def download_rp_price():
     with zipfile.ZipFile(zip_path, "r") as z:
         z.extractall(extract_dir)
 
-    # 2️⃣ Ищем XLS внутри
+    # 2️⃣ Ищем XLS
     xls_files = [
         f for f in os.listdir(extract_dir)
         if f.lower().endswith(".xls")
     ]
+
     if not xls_files:
         raise Exception("RP: в ZIP нет XLS файла")
 
     xls_path = os.path.join(extract_dir, xls_files[0])
 
-    # 3️⃣ Пересохраняем XLS → XLSX
-    wb = load_workbook(xls_path)
-    wb.save(final_xlsx)
+    print("📄 RP: читаем XLS через xlrd")
+
+    # 3️⃣ ЧИТАЕМ XLS ПРАВИЛЬНО
+    df = pd.read_excel(xls_path, engine="xlrd")
+
+    # 4️⃣ СОХРАНЯЕМ В XLSX
+    df.to_excel(final_xlsx, index=False, engine="openpyxl")
 
     print("✅ RP: сохранён как rp.xlsx")
 
-    # 4️⃣ Загружаем в Яндекс.Диск
+    # 5️⃣ Загружаем в Яндекс.Диск
     upload_to_yandex(final_xlsx, "/prices/rp/rp.xlsx")
 
 # ================== SMIRNOV ==================
