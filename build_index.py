@@ -11,7 +11,7 @@ INDEX_DB = "index.db"
 PRICES = {
     "equip": "/prices/equip/equip.xlsx",
     "rosholod": "/prices/rosholod/rosholod.xls",
-    "rp": "/prices/rp/rp.xls",
+    "rp": "/prices/rp/rp.xls",            # ⚠️ проблемный
     "smirnov": "/prices/smirnov/smirnov.xlsx",
     "trade_design": "/prices/trade_design/td.xlsx",
     "bio": "/prices/bio/bio.xlsx",
@@ -75,18 +75,47 @@ def init_db():
     conn.commit()
     return conn
 
-# ================== INDEX ==================
+# ================== XLS → XLSX (ДЛЯ RP) ==================
 
-def read_price_file(remote_path, local_path):
+def convert_xls_to_xlsx(xls_path):
     """
-    Универсальное чтение:
-    XLS  → xlrd
-    XLSX → openpyxl
+    Конвертируем кривой rp.xls → нормальный xlsx
     """
-    if remote_path.lower().endswith(".xls"):
+    df = pd.read_excel(xls_path, engine=None)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+    xlsx_path = tmp.name
+    tmp.close()
+
+    df.to_excel(xlsx_path, index=False, engine="openpyxl")
+    return xlsx_path
+
+# ================== READ PRICE ==================
+
+def read_price_file(source, local_path):
+    """
+    ЧИТАЕМ ПРАЙС ПРАВИЛЬНО
+    """
+
+    # ⚠️ RP: сначала конвертируем
+    if source == "rp" and local_path.lower().endswith(".xls"):
+        xlsx_path = convert_xls_to_xlsx(local_path)
+        try:
+            return pd.read_excel(xlsx_path, engine="openpyxl")
+        finally:
+            try:
+                os.unlink(xlsx_path)
+            except Exception:
+                pass
+
+    # обычные XLS
+    if local_path.lower().endswith(".xls"):
         return pd.read_excel(local_path, engine="xlrd")
-    else:
-        return pd.read_excel(local_path, engine="openpyxl")
+
+    # XLSX
+    return pd.read_excel(local_path, engine="openpyxl")
+
+# ================== BUILD INDEX ==================
 
 def build_index():
     print("🧠 Строим индекс")
@@ -107,7 +136,7 @@ def build_index():
 
         try:
             y.download(remote_path, local_path)
-            df = read_price_file(remote_path, local_path)
+            df = read_price_file(source, local_path)
         except Exception as e:
             print(f"❌ Ошибка чтения {source}: {e}")
             continue
@@ -117,13 +146,13 @@ def build_index():
             except Exception:
                 pass
 
-        print(f"   строк: {len(df)}")
+        print(f"строк: {len(df)}")
 
         for _, row in df.iterrows():
             name = (
                 row.get("Наименование")
                 or row.get("Название")
-                or row.get("ТОВАР")      # ✅ RP
+                or row.get("ТОВАР")   # ✅ RP
                 or row.get("name")
                 or ""
             )
