@@ -11,7 +11,7 @@ INDEX_DB = "index.db"
 PRICES = {
     "equip": "/prices/equip/equip.xlsx",
     "rosholod": "/prices/rosholod/rosholod.xls",
-    "rp": "/prices/rp/rp.xls",            # ⚠️ проблемный
+    "rp": "/prices/rp/rp.xls",
     "smirnov": "/prices/smirnov/smirnov.xlsx",
     "trade_design": "/prices/trade_design/td.xlsx",
     "bio": "/prices/bio/bio.xlsx",
@@ -75,44 +75,25 @@ def init_db():
     conn.commit()
     return conn
 
-# ================== XLS → XLSX (ДЛЯ RP) ==================
-
-def convert_xls_to_xlsx(xls_path):
-    """
-    Конвертируем кривой rp.xls → нормальный xlsx
-    """
-    df = pd.read_excel(xls_path, engine=None)
-
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
-    xlsx_path = tmp.name
-    tmp.close()
-
-    df.to_excel(xlsx_path, index=False, engine="openpyxl")
-    return xlsx_path
-
 # ================== READ PRICE ==================
 
 def read_price_file(source, local_path):
     """
-    ЧИТАЕМ ПРАЙС ПРАВИЛЬНО
+    ПРАВИЛЬНОЕ ЧТЕНИЕ ВСЕХ ФОРМАТОВ
     """
 
-    # ⚠️ RP: сначала конвертируем
-    if source == "rp" and local_path.lower().endswith(".xls"):
-        xlsx_path = convert_xls_to_xlsx(local_path)
-        try:
-            return pd.read_excel(xlsx_path, engine="openpyxl")
-        finally:
-            try:
-                os.unlink(xlsx_path)
-            except Exception:
-                pass
+    # ✅ RP — это HTML под видом XLS
+    if source == "rp":
+        tables = pd.read_html(local_path)
+        if not tables:
+            raise Exception("RP: HTML таблицы не найдены")
+        return tables[0]
 
-    # обычные XLS
+    # ✅ Настоящий XLS
     if local_path.lower().endswith(".xls"):
         return pd.read_excel(local_path, engine="xlrd")
 
-    # XLSX
+    # ✅ XLSX
     return pd.read_excel(local_path, engine="openpyxl")
 
 # ================== BUILD INDEX ==================
@@ -152,7 +133,7 @@ def build_index():
             name = (
                 row.get("Наименование")
                 or row.get("Название")
-                or row.get("ТОВАР")   # ✅ RP
+                or row.get("ТОВАР")   # RP
                 or row.get("name")
                 or ""
             )
