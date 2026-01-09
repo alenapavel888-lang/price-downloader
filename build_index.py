@@ -4,6 +4,7 @@ import yadisk
 import pandas as pd
 import re
 import tempfile
+import subprocess
 
 YANDEX_TOKEN = os.environ["YANDEX_TOKEN"]
 INDEX_DB = "index.db"
@@ -71,28 +72,24 @@ def init_db():
     conn.commit()
     return conn
 
-# ================== XLS → XLSX ==================
+# ================== XLS → XLSX (LibreOffice) ==================
 
-def convert_xls_to_xlsx(xls_path: str, source: str) -> str:
-    """
-    Конвертация XLS → XLSX
-    RP читаем с ignore_workbook_corruption
-    """
-    xlsx_path = f"{xls_path}.xlsx"
+def convert_xls_to_xlsx(xls_path: str) -> str:
+    xlsx_path = xls_path + ".xlsx"
 
-    if source == "rp":
-        df = pd.read_excel(
+    subprocess.run(
+        [
+            "soffice",
+            "--headless",
+            "--convert-to",
+            "xlsx",
             xls_path,
-            engine="xlrd",
-            ignore_workbook_corruption=True
-        )
-    else:
-        df = pd.read_excel(
-            xls_path,
-            engine="xlrd"
-        )
+            "--outdir",
+            os.path.dirname(xls_path),
+        ],
+        check=True,
+    )
 
-    df.to_excel(xlsx_path, index=False, engine="openpyxl")
     return xlsx_path
 
 # ================== BUILD INDEX ==================
@@ -111,27 +108,21 @@ def build_index():
             print(f"⚠️ Файл не найден: {remote_path}")
             continue
 
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            downloaded_path = tmp.name
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local_path = os.path.join(tmpdir, os.path.basename(remote_path))
+            y.download(remote_path, local_path)
 
-        try:
-            y.download(remote_path, downloaded_path)
-
-            final_path = downloaded_path
-
-            if remote_path.lower().endswith(".xls"):
-                final_path = convert_xls_to_xlsx(downloaded_path, source)
-
-            df = pd.read_excel(final_path, engine="openpyxl")
-
-        except Exception as e:
-            print(f"❌ Ошибка чтения {source}: {e}")
-            continue
-        finally:
             try:
-                os.unlink(downloaded_path)
-            except Exception:
-                pass
+                if local_path.lower().endswith(".xls"):
+                    xlsx_path = convert_xls_to_xlsx(local_path)
+                else:
+                    xlsx_path = local_path
+
+                df = pd.read_excel(xlsx_path, engine="openpyxl")
+
+            except Exception as e:
+                print(f"❌ Ошибка чтения {source}: {e}")
+                continue
 
         print(f"строк: {len(df)}")
 
