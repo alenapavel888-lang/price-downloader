@@ -4,6 +4,7 @@ import yadisk
 import pandas as pd
 import re
 import tempfile
+from pathlib import Path
 
 YANDEX_TOKEN = os.environ["YANDEX_TOKEN"]
 INDEX_DB = "index.db"
@@ -66,41 +67,31 @@ def init_db():
         value REAL,
         unit TEXT
     );
-
-    CREATE INDEX idx_items_name ON items(name_norm);
-    CREATE INDEX idx_tokens_token ON tokens(token);
-    CREATE INDEX idx_numbers_value ON numbers(value);
     """)
 
     conn.commit()
     return conn
 
+# ================== XLS → XLSX ==================
+
+def convert_xls_to_xlsx(xls_path: str) -> str:
+    """
+    Конвертирует .xls → .xlsx
+    Возвращает путь к новому файлу
+    """
+    xlsx_path = f"{xls_path}.xlsx"
+
+    df = pd.read_excel(xls_path, engine="xlrd")
+    df.to_excel(xlsx_path, index=False, engine="openpyxl")
+
+    return xlsx_path
+
 # ================== READ PRICE ==================
 
-def read_price_file(source, local_path):
+def read_price_file(local_path: str) -> pd.DataFrame:
     """
-    ПРАВИЛЬНОЕ ЧТЕНИЕ:
-    - equip / smirnov / trade / bio → XLSX
-    - rosholod → XLS (xlrd)
-    - rp → HTML (cp1251)
+    Всегда читаем XLSX
     """
-
-    # 🔴 RP — ЭТО HTML В CP1251
-    if source == "rp":
-        with open(local_path, "rb") as f:
-            content = f.read().decode("cp1251", errors="ignore")
-
-        tables = pd.read_html(content)
-        if not tables:
-            raise ValueError("RP: таблицы не найдены")
-
-        return tables[0]
-
-    # 🟡 Обычный XLS
-    if local_path.lower().endswith(".xls"):
-        return pd.read_excel(local_path, engine="xlrd")
-
-    # 🟢 XLSX
     return pd.read_excel(local_path, engine="openpyxl")
 
 # ================== BUILD INDEX ==================
@@ -120,17 +111,27 @@ def build_index():
             continue
 
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            local_path = tmp.name
+            downloaded_path = tmp.name
 
         try:
-            y.download(remote_path, local_path)
-            df = read_price_file(source, local_path)
+            # 1. Скачали
+            y.download(remote_path, downloaded_path)
+
+            final_path = downloaded_path
+
+            # 2. Если XLS → конвертируем
+            if remote_path.lower().endswith(".xls"):
+                final_path = convert_xls_to_xlsx(downloaded_path)
+
+            # 3. Читаем ТОЛЬКО XLSX
+            df = read_price_file(final_path)
+
         except Exception as e:
             print(f"❌ Ошибка чтения {source}: {e}")
             continue
         finally:
             try:
-                os.unlink(local_path)
+                os.unlink(downloaded_path)
             except Exception:
                 pass
 
@@ -140,7 +141,7 @@ def build_index():
             name = (
                 row.get("Наименование")
                 or row.get("Название")
-                or row.get("ТОВАР")      # RP
+                or row.get("ТОВАР")
                 or row.get("name")
                 or ""
             )
