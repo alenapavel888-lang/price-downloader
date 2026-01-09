@@ -10,7 +10,7 @@ INDEX_DB = "index.db"
 
 PRICES = {
     "equip": "/prices/equip/equip.xlsx",
-    "rosholod": "/prices/rosholod/rosholod.xlsx",
+    "rosholod": "/prices/rosholod/rosholod.xls",
     "rp": "/prices/rp/rp.xls",
     "smirnov": "/prices/smirnov/smirnov.xlsx",
     "trade_design": "/prices/trade_design/td.xlsx",
@@ -79,22 +79,14 @@ def init_db():
 
 def read_price_file(remote_path, local_path):
     """
-    Универсальное чтение прайса:
-    1) XLS → xlrd
-    2) XLSX → openpyxl
-    3) HTML под видом XLS (RP) → read_html
+    Универсальное чтение:
+    XLS  → xlrd
+    XLSX → openpyxl
     """
-    try:
-        if remote_path.lower().endswith(".xls"):
-            return pd.read_excel(local_path, engine="xlrd")
-        else:
-            return pd.read_excel(local_path, engine="openpyxl")
-    except Exception:
-        # fallback для RP (HTML)
-        tables = pd.read_html(local_path)
-        if not tables:
-            raise Exception("HTML таблицы не найдены")
-        return tables[0]
+    if remote_path.lower().endswith(".xls"):
+        return pd.read_excel(local_path, engine="xlrd")
+    else:
+        return pd.read_excel(local_path, engine="openpyxl")
 
 def build_index():
     print("🧠 Строим индекс")
@@ -131,9 +123,11 @@ def build_index():
             name = (
                 row.get("Наименование")
                 or row.get("Название")
+                or row.get("ТОВАР")      # ✅ RP
                 or row.get("name")
                 or ""
             )
+
             article = (
                 row.get("Артикул")
                 or row.get("Код")
