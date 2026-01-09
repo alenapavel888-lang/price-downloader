@@ -5,6 +5,7 @@ import pandas as pd
 import re
 import tempfile
 import subprocess
+from pathlib import Path
 
 YANDEX_TOKEN = os.environ["YANDEX_TOKEN"]
 INDEX_DB = "index.db"
@@ -72,22 +73,25 @@ def init_db():
     conn.commit()
     return conn
 
-# ================== XLS → XLSX (LibreOffice) ==================
+# ================== XLS → XLSX (ТОЛЬКО RP) ==================
 
-def convert_xls_to_xlsx(xls_path: str) -> str:
-    xlsx_path = xls_path + ".xlsx"
+def convert_xls_to_xlsx(xls_path):
+    xls_path = Path(xls_path)
+    xlsx_path = xls_path.with_suffix(".xlsx")
 
     subprocess.run(
         [
-            "soffice",
+            "libreoffice",
             "--headless",
             "--convert-to",
             "xlsx",
-            xls_path,
             "--outdir",
-            os.path.dirname(xls_path),
+            str(xls_path.parent),
+            str(xls_path),
         ],
         check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
 
     return xlsx_path
@@ -109,67 +113,71 @@ def build_index():
             continue
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            local_path = os.path.join(tmpdir, os.path.basename(remote_path))
-            y.download(remote_path, local_path)
+            local_path = Path(tmpdir) / Path(remote_path).name
+            y.download(remote_path, str(local_path))
 
             try:
-                if local_path.lower().endswith(".xls"):
+                # 🔥 ВАЖНО: конвертируем ТОЛЬКО RP
+                if source == "rp" and local_path.suffix == ".xls":
                     xlsx_path = convert_xls_to_xlsx(local_path)
+                    df = pd.read_excel(xlsx_path, engine="openpyxl")
                 else:
-                    xlsx_path = local_path
-
-                df = pd.read_excel(xlsx_path, engine="openpyxl")
+                    # 🔒 ВСЁ ОСТАЛЬНОЕ — КАК БЫЛО
+                    if local_path.suffix == ".xls":
+                        df = pd.read_excel(local_path, engine="xlrd")
+                    else:
+                        df = pd.read_excel(local_path, engine="openpyxl")
 
             except Exception as e:
                 print(f"❌ Ошибка чтения {source}: {e}")
                 continue
 
-        print(f"строк: {len(df)}")
+            print(f"строк: {len(df)}")
 
-        for _, row in df.iterrows():
-            name = (
-                row.get("Наименование")
-                or row.get("Название")
-                or row.get("ТОВАР")
-                or row.get("name")
-                or ""
-            )
-
-            article = (
-                row.get("Артикул")
-                or row.get("Код")
-                or row.get("article")
-                or ""
-            )
-
-            name = str(name).strip()
-            article = str(article).strip()
-
-            if not name:
-                continue
-
-            name_norm = normalize(name)
-
-            cur.execute(
-                "INSERT INTO items (source, article, name_raw, name_norm) VALUES (?,?,?,?)",
-                (source, article, name, name_norm),
-            )
-            item_id = cur.lastrowid
-
-            for token in name_norm.split():
-                cur.execute(
-                    "INSERT INTO tokens (item_id, token) VALUES (?,?)",
-                    (item_id, token),
+            for _, row in df.iterrows():
+                name = (
+                    row.get("Наименование")
+                    or row.get("Название")
+                    or row.get("ТОВАР")
+                    or row.get("name")
+                    or ""
                 )
 
-            for value, unit in extract_numbers(name):
-                cur.execute(
-                    "INSERT INTO numbers (item_id, value, unit) VALUES (?,?,?)",
-                    (item_id, value, unit),
+                article = (
+                    row.get("Артикул")
+                    or row.get("Код")
+                    or row.get("article")
+                    or ""
                 )
 
-        conn.commit()
-        print(f"✅ {source} готов")
+                name = str(name).strip()
+                article = str(article).strip()
+
+                if not name:
+                    continue
+
+                name_norm = normalize(name)
+
+                cur.execute(
+                    "INSERT INTO items (source, article, name_raw, name_norm) VALUES (?,?,?,?)",
+                    (source, article, name, name_norm),
+                )
+                item_id = cur.lastrowid
+
+                for token in name_norm.split():
+                    cur.execute(
+                        "INSERT INTO tokens (item_id, token) VALUES (?,?)",
+                        (item_id, token),
+                    )
+
+                for value, unit in extract_numbers(name):
+                    cur.execute(
+                        "INSERT INTO numbers (item_id, value, unit) VALUES (?,?,?)",
+                        (item_id, value, unit),
+                    )
+
+            conn.commit()
+            print(f"✅ {source} готов")
 
     conn.close()
     print("\n🎉 Индекс index.db успешно создан")
