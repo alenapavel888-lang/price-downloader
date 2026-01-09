@@ -4,7 +4,6 @@ import yadisk
 import pandas as pd
 import re
 import tempfile
-from pathlib import Path
 
 YANDEX_TOKEN = os.environ["YANDEX_TOKEN"]
 INDEX_DB = "index.db"
@@ -74,25 +73,27 @@ def init_db():
 
 # ================== XLS → XLSX ==================
 
-def convert_xls_to_xlsx(xls_path: str) -> str:
+def convert_xls_to_xlsx(xls_path: str, source: str) -> str:
     """
-    Конвертирует .xls → .xlsx
-    Возвращает путь к новому файлу
+    Конвертация XLS → XLSX
+    RP читаем с ignore_workbook_corruption
     """
     xlsx_path = f"{xls_path}.xlsx"
 
-    df = pd.read_excel(xls_path, engine="xlrd")
+    if source == "rp":
+        df = pd.read_excel(
+            xls_path,
+            engine="xlrd",
+            ignore_workbook_corruption=True
+        )
+    else:
+        df = pd.read_excel(
+            xls_path,
+            engine="xlrd"
+        )
+
     df.to_excel(xlsx_path, index=False, engine="openpyxl")
-
     return xlsx_path
-
-# ================== READ PRICE ==================
-
-def read_price_file(local_path: str) -> pd.DataFrame:
-    """
-    Всегда читаем XLSX
-    """
-    return pd.read_excel(local_path, engine="openpyxl")
 
 # ================== BUILD INDEX ==================
 
@@ -114,17 +115,14 @@ def build_index():
             downloaded_path = tmp.name
 
         try:
-            # 1. Скачали
             y.download(remote_path, downloaded_path)
 
             final_path = downloaded_path
 
-            # 2. Если XLS → конвертируем
             if remote_path.lower().endswith(".xls"):
-                final_path = convert_xls_to_xlsx(downloaded_path)
+                final_path = convert_xls_to_xlsx(downloaded_path, source)
 
-            # 3. Читаем ТОЛЬКО XLSX
-            df = read_price_file(final_path)
+            df = pd.read_excel(final_path, engine="openpyxl")
 
         except Exception as e:
             print(f"❌ Ошибка чтения {source}: {e}")
