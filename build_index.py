@@ -79,21 +79,28 @@ def init_db():
 
 def read_price_file(source, local_path):
     """
-    СТРОГО ПРАВИЛЬНАЯ ЛОГИКА
+    ПРАВИЛЬНОЕ ЧТЕНИЕ:
+    - equip / smirnov / trade / bio → XLSX
+    - rosholod → XLS (xlrd)
+    - rp → HTML (cp1251)
     """
 
-    # ✅ RP = HTML
+    # 🔴 RP — ЭТО HTML В CP1251
     if source == "rp":
-        tables = pd.read_html(local_path)
+        with open(local_path, "rb") as f:
+            content = f.read().decode("cp1251", errors="ignore")
+
+        tables = pd.read_html(content)
         if not tables:
-            raise Exception("RP: HTML таблицы не найдены")
+            raise ValueError("RP: таблицы не найдены")
+
         return tables[0]
 
-    # ✅ rosholod = настоящий XLS
-    if source == "rosholod":
+    # 🟡 Обычный XLS
+    if local_path.lower().endswith(".xls"):
         return pd.read_excel(local_path, engine="xlrd")
 
-    # ✅ всё остальное = XLSX
+    # 🟢 XLSX
     return pd.read_excel(local_path, engine="openpyxl")
 
 # ================== BUILD INDEX ==================
@@ -133,7 +140,7 @@ def build_index():
             name = (
                 row.get("Наименование")
                 or row.get("Название")
-                or row.get("ТОВАР")   # RP
+                or row.get("ТОВАР")      # RP
                 or row.get("name")
                 or ""
             )
