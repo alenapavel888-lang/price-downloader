@@ -79,21 +79,21 @@ def init_db():
 
 def read_price_file(source, local_path):
     """
-    ПРАВИЛЬНОЕ ЧТЕНИЕ ВСЕХ ФОРМАТОВ
+    СТРОГО ПРАВИЛЬНАЯ ЛОГИКА
     """
 
-    # ✅ RP — это HTML под видом XLS
+    # ✅ RP = HTML
     if source == "rp":
         tables = pd.read_html(local_path)
         if not tables:
             raise Exception("RP: HTML таблицы не найдены")
         return tables[0]
 
-    # ✅ Настоящий XLS
-    if local_path.lower().endswith(".xls"):
+    # ✅ rosholod = настоящий XLS
+    if source == "rosholod":
         return pd.read_excel(local_path, engine="xlrd")
 
-    # ✅ XLSX
+    # ✅ всё остальное = XLSX
     return pd.read_excel(local_path, engine="openpyxl")
 
 # ================== BUILD INDEX ==================
