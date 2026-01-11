@@ -11,6 +11,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 🔽 СКАЧИВАЕМ index.db, созданный build_index
+      - name: Download index artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: index-db
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
