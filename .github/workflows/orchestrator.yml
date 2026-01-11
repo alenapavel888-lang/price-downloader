@@ -1,21 +1,17 @@
-name: Orchestrator check
+name: Build index
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"   # раз в сутки, можно убрать если не нужно
 
 jobs:
-  orchestrator:
+  build-index:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 🔽 СКАЧИВАЕМ index.db, созданный build_index
-      - name: Download index artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: index-db
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -27,6 +23,16 @@ jobs:
           pip install --upgrade pip
           pip install pandas openpyxl xlrd==2.0.1
 
-      - name: Run orchestrator
+      - name: Build index.db
         run: |
-          python orchestrator.py
+          python build_index.py
+
+      - name: Check index.db exists
+        run: |
+          ls -lh index.db
+
+      - name: Upload index artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: index-db
+          path: index.db
