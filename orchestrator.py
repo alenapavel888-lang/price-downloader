@@ -2,101 +2,96 @@ import os
 import sys
 import sqlite3
 
-# -----------------------------
-# НАСТРОЙКИ
-# -----------------------------
-
-INDEX_PATH = "index.db"
-
-SUPPLIERS = [
-    "equip",
-    "bio",
-    "rp",
-    "rosholod",
-    "trade_design",
-    "smirnov",
-]
+# =========================
+# КОНФИГУРАЦИЯ
+# =========================
 
 DATA_DIR = "data"
+INDEX_DB_PATH = "index.db"
 
+REQUIRED_PRICE_FILES = [
+    "equip.xlsx",
+    "bio.xlsx",
+    "rp.xlsx",
+    "rosholod.xlsx",
+    "smirnov.xlsx",
+    "td.xlsx",        # trade_design (у тебя так называется)
+]
 
-# -----------------------------
+# =========================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# -----------------------------
+# =========================
 
-def log(msg):
-    print(msg, flush=True)
-
-
-def fail(msg):
-    log(f"❌ {msg}")
+def fail(message: str):
+    print(f"❌ ОШИБКА: {message}")
     sys.exit(1)
 
 
-# -----------------------------
-# ПРОВЕРКИ ОКРУЖЕНИЯ
-# -----------------------------
-
-def check_index():
-    log("🔍 Проверка index.db")
-    if not os.path.isfile(INDEX_PATH):
-        fail("index.db не найден. Сначала выполните build_index.py")
-    log("✅ index.db найден")
-
-
-def check_data_files():
-    log("🔍 Проверка прайсов поставщиков")
+def check_data_directory():
+    print("🔍 Проверка папки data/ ...")
     if not os.path.isdir(DATA_DIR):
-        fail(f"Папка {DATA_DIR}/ не найдена")
+        fail("Папка data/ не найдена")
+    print("✅ Папка data/ найдена")
 
+
+def check_price_files():
+    print("🔍 Проверка прайсов поставщиков ...")
     missing = []
-
-    for supplier in SUPPLIERS:
-        found = False
-        for ext in (".xls", ".xlsx"):
-            path = os.path.join(DATA_DIR, supplier + ext)
-            if os.path.isfile(path):
-                found = True
-                break
-        if not found:
-            missing.append(supplier)
+    for filename in REQUIRED_PRICE_FILES:
+        path = os.path.join(DATA_DIR, filename)
+        if not os.path.isfile(path):
+            missing.append(filename)
 
     if missing:
-        fail(f"Отсутствуют прайсы поставщиков: {', '.join(missing)}")
+        fail(f"Отсутствуют прайсы: {', '.join(missing)}")
 
-    log("✅ Все прайсы поставщиков найдены")
+    print("✅ Все прайсы поставщиков найдены")
 
 
-def check_index_readable():
-    log("🔍 Проверка чтения index.db")
+def check_index_db():
+    print("🔍 Проверка index.db ...")
+    if not os.path.isfile(INDEX_DB_PATH):
+        fail("Файл index.db не найден")
+
     try:
-        conn = sqlite3.connect(INDEX_PATH)
-        cur = conn.cursor()
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = cur.fetchall()
+        conn = sqlite3.connect(INDEX_DB_PATH)
+        conn.execute("SELECT 1")
         conn.close()
     except Exception as e:
-        fail(f"Ошибка чтения index.db: {e}")
+        fail(f"index.db повреждён или не читается: {e}")
 
-    if not tables:
-        fail("index.db пуст — таблицы не найдены")
-
-    log(f"✅ index.db содержит таблицы: {[t[0] for t in tables]}")
+    print("✅ index.db доступен и читается")
 
 
-# -----------------------------
-# ОСНОВНОЙ СЦЕНАРИЙ
-# -----------------------------
+def read_user_query():
+    print("\n📝 Введите запрос менеджера (одной строкой):")
+    query = input("> ").strip()
+
+    if not query:
+        fail("Пустой запрос недопустим")
+
+    print(f"✅ Запрос принят: «{query}»")
+    return query
+
+
+# =========================
+# ТОЧКА ВХОДА
+# =========================
 
 def main():
-    log("▶️ Старт orchestrator")
+    print("🚀 Старт orchestrator.py")
+    print("=" * 50)
 
-    check_index()
-    check_data_files()
-    check_index_readable()
+    check_data_directory()
+    check_price_files()
+    check_index_db()
 
-    log("✅ Окружение готово. Можно выполнять поиск и расчёт.")
-    log("✅ Orchestrator готов к работе")
+    query = read_user_query()
+
+    print("\n🧠 Агент готов к дальнейшей обработке запроса")
+    print("ℹ️ Поиск и расчёты будут добавлены на следующих шагах")
+
+    print("\n✅ ШАГ 1 УСПЕШНО ЗАВЕРШЁН")
 
 
 if __name__ == "__main__":
