@@ -2,6 +2,11 @@ name: Run Orchestrator
 
 on:
   workflow_dispatch:
+    inputs:
+      manager_query:
+        description: "Запрос менеджера (например: мясорубка 70 кг)"
+        required: true
+        default: "мясорубка 70 кг"
 
 jobs:
   run-orchestrator:
@@ -22,5 +27,7 @@ jobs:
           pip install pandas openpyxl xlrd==2.0.1
 
       - name: Run orchestrator
+        env:
+          MANAGER_QUERY: ${{ github.event.inputs.manager_query }}
         run: |
           python orchestrator.py
