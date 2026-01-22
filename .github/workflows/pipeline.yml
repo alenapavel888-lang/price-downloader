@@ -1,54 +1,15 @@
-name: Price pipeline
+name: Run Orchestrator
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-index:
+  run-orchestrator:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install pandas openpyxl xlrd==2.0.1
-
-      - name: Build index
-        run: |
-          python build_index.py
-
-      - name: Upload index.db
-        uses: actions/upload-artifact@v4
-        with:
-          name: index-db
-          path: index.db
-
-
-  orchestrator:
-    runs-on: ubuntu-latest
-    needs: build-index
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download index.db
-        uses: actions/download-artifact@v4
-        with:
-          name: index-db
-          path: .
-
-      - name: Check index exists
-        run: |
-          ls -lh index.db
 
       - name: Set up Python
         uses: actions/setup-python@v5
