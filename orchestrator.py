@@ -15,7 +15,7 @@ REQUIRED_PRICE_FILES = [
     "rp.xlsx",
     "rosholod.xlsx",
     "smirnov.xlsx",
-    "td.xlsx",        # trade_design (у тебя так называется)
+    "td.xlsx",        # trade_design (как у тебя на Яндекс Диске)
 ]
 
 # =========================
@@ -64,12 +64,17 @@ def check_index_db():
 
 
 def read_user_query():
-    print("\n📝 Введите запрос менеджера (одной строкой):")
-    query = input("> ").strip()
+    print("📥 Получение запроса менеджера из переменной окружения ...")
 
-    if not query:
-        fail("Пустой запрос недопустим")
+    query = os.getenv("MANAGER_QUERY")
 
+    if not query or not query.strip():
+        fail(
+            "Переменная окружения MANAGER_QUERY не задана.\n"
+            "Передай запрос через GitHub Actions (env: MANAGER_QUERY)"
+        )
+
+    query = query.strip()
     print(f"✅ Запрос принят: «{query}»")
     return query
 
@@ -80,7 +85,7 @@ def read_user_query():
 
 def main():
     print("🚀 Старт orchestrator.py")
-    print("=" * 50)
+    print("=" * 60)
 
     check_data_directory()
     check_price_files()
