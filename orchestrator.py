@@ -1,9 +1,8 @@
 import os
 import sys
 import sqlite3
+import pandas as pd
 import re
-import requests
-from bs4 import BeautifulSoup
 
 # =========================
 # КОНФИГУРАЦИЯ
@@ -12,174 +11,135 @@ from bs4 import BeautifulSoup
 DATA_DIR = "data"
 INDEX_DB_PATH = "index.db"
 
-REQUIRED_PRICE_FILES = [
-    "equip.xlsx",
-    "bio.xlsx",
-    "rp.xlsx",
-    "rosholod.xlsx",
-    "smirnov.xlsx",
-    "td.xlsx",  # trade_design (как у тебя на Яндекс Диске)
-]
+SUPPLIERS = {
+    "equip": "equip.xlsx",
+    "bio": "bio.xlsx",
+    "rp": "rp.xlsx",
+    "rosholod": "rosholod.xlsx",
+    "smirnov": "smirnov.xlsx",
+    "trade_design": "td.xlsx",
+}
 
 # =========================
-# БАЗОВЫЕ УТИЛИТЫ
+# БАЗОВЫЕ ПРОВЕРКИ
 # =========================
 
 def fail(message: str):
     print(f"❌ ОШИБКА: {message}")
     sys.exit(1)
 
-# =========================
-# ПРОВЕРКИ СРЕДЫ
-# =========================
 
-def check_data_directory():
-    print("🔍 Проверка папки data/ ...")
+def check_environment():
+    print("🔍 Проверка окружения")
+
     if not os.path.isdir(DATA_DIR):
         fail("Папка data/ не найдена")
-    print("✅ Папка data/ найдена")
 
-
-def check_price_files():
-    print("🔍 Проверка прайсов поставщиков ...")
-    missing = []
-    for filename in REQUIRED_PRICE_FILES:
+    for supplier, filename in SUPPLIERS.items():
         path = os.path.join(DATA_DIR, filename)
         if not os.path.isfile(path):
-            missing.append(filename)
+            fail(f"Прайс {supplier} не найден: {filename}")
 
-    if missing:
-        fail(f"Отсутствуют прайсы: {', '.join(missing)}")
-
-    print("✅ Все прайсы поставщиков найдены")
-
-
-def check_index_db():
-    print("🔍 Проверка index.db ...")
     if not os.path.isfile(INDEX_DB_PATH):
-        fail("Файл index.db не найден")
+        fail("index.db не найден")
 
-    try:
-        conn = sqlite3.connect(INDEX_DB_PATH)
-        conn.execute("SELECT 1")
-        conn.close()
-    except Exception as e:
-        fail(f"index.db повреждён или не читается: {e}")
-
-    print("✅ index.db доступен и читается")
-
-# =========================
-# INPUT LAYER — ЗАПРОС МЕНЕДЖЕРА
-# =========================
-
-def extract_links(text: str) -> list:
-    return re.findall(r"https?://[^\s]+", text)
+    print("✅ Окружение готово")
 
 
-def fetch_data_from_link(url: str) -> dict:
-    """
-    Переход по ссылке поставщика.
-    НИЧЕГО НЕ ДОДУМЫВАЕМ.
-    """
-    print(f"🔗 Переход по ссылке: {url}")
-
-    try:
-        resp = requests.get(
-            url,
-            timeout=20,
-            headers={"User-Agent": "Mozilla/5.0"}
-        )
-    except Exception as e:
-        return {
-            "source_url": url,
-            "error": f"Не удалось открыть ссылку: {e}"
-        }
-
-    if resp.status_code != 200:
-        return {
-            "source_url": url,
-            "error": f"Страница недоступна (HTTP {resp.status_code})"
-        }
-
-    soup = BeautifulSoup(resp.text, "html.parser")
-
-    title = soup.title.string.strip() if soup.title else ""
-    page_text = soup.get_text(" ", strip=True).lower()
-
-    characteristics = {}
-
-    # ФАКТИЧЕСКОЕ извлечение чисел
-    kg_match = re.search(r"(\d+(?:[.,]\d+)?)\s*кг", page_text)
-    if kg_match:
-        characteristics["performance_kg"] = float(kg_match.group(1).replace(",", "."))
-
-    l_match = re.search(r"(\d+(?:[.,]\d+)?)\s*л", page_text)
-    if l_match:
-        characteristics["volume_l"] = float(l_match.group(1).replace(",", "."))
-
-    levels_match = re.search(r"(\d+)\s*уров", page_text)
-    if levels_match:
-        characteristics["levels"] = int(levels_match.group(1))
-
-    return {
-        "source_url": url,
-        "title": title,
-        "characteristics": characteristics
-    }
-
-
-def read_user_query():
-    print("📥 Получение запроса менеджера из переменной окружения MANAGER_QUERY ...")
-
+def read_manager_query():
     query = os.getenv("MANAGER_QUERY")
-
     if not query or not query.strip():
-        fail(
-            "Переменная окружения MANAGER_QUERY не задана.\n"
-            "Передай запрос через GitHub Actions (env: MANAGER_QUERY)"
-        )
-
+        fail("MANAGER_QUERY не задан")
     query = query.strip()
-    print(f"✅ Запрос принят: «{query}»")
+    print(f"📥 Запрос менеджера: «{query}»")
+    return query
 
-    links = extract_links(query)
 
-    parsed_query = {
-        "raw_text": query,
-        "links": links,
-        "from_links": [],
-        "allow_analogs": "аналог" in query.lower(),
-        "characteristics": {}
+# =========================
+# НОРМАЛИЗАЦИЯ И ПАРСИНГ
+# =========================
+
+def normalize_text(text: str) -> str:
+    if not isinstance(text, str):
+        return ""
+    text = text.lower()
+    text = re.sub(r"[^\w\s×x]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def extract_numbers(text: str):
+    """
+    Извлекаем ТОЛЬКО фактические числовые характеристики
+    """
+    if not text:
+        return {}
+
+    result = {}
+
+    patterns = {
+        "kg": r"(\d+(?:[.,]\d+)?)\s*кг",
+        "liters": r"(\d+(?:[.,]\d+)?)\s*л",
+        "levels": r"(\d+)\s*уров",
+        "kw": r"(\d+(?:[.,]\d+)?)\s*квт",
     }
 
-    # 🔥 ПРИОРИТЕТ — ССЫЛКИ
-    if links:
-        print("🔎 Обнаружены ссылки, начинаем с них")
-        for link in links:
-            data = fetch_data_from_link(link)
-            parsed_query["from_links"].append(data)
-        return parsed_query
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text)
+        if match:
+            value = match.group(1).replace(",", ".")
+            result[key] = float(value)
 
-    # Если ссылок нет — разбираем текст
-    text = query.lower()
+    return result
 
-    kg_match = re.search(r"(\d+(?:[.,]\d+)?)\s*кг", text)
-    if kg_match:
-        parsed_query["characteristics"]["performance_kg"] = float(
-            kg_match.group(1).replace(",", ".")
-        )
 
-    l_match = re.search(r"(\d+(?:[.,]\d+)?)\s*л", text)
-    if l_match:
-        parsed_query["characteristics"]["volume_l"] = float(
-            l_match.group(1).replace(",", ".")
-        )
+# =========================
+# ЗАГРУЗКА ПРАЙСОВ
+# =========================
 
-    levels_match = re.search(r"(\d+)\s*уров", text)
-    if levels_match:
-        parsed_query["characteristics"]["levels"] = int(levels_match.group(1))
+def load_price_file(supplier: str, filename: str):
+    path = os.path.join(DATA_DIR, filename)
+    print(f"📄 Загрузка прайса {supplier}: {filename}")
 
-    return parsed_query
+    try:
+        df = pd.read_excel(path, dtype=str)
+    except Exception as e:
+        fail(f"Ошибка чтения {filename}: {e}")
+
+    df = df.fillna("")
+
+    items = []
+
+    for _, row in df.iterrows():
+        name = row.to_string()
+
+        normalized_name = normalize_text(name)
+        numbers = extract_numbers(normalized_name)
+
+        item = {
+            "supplier": supplier,
+            "raw_row": row.to_dict(),
+            "name": row.to_string(),
+            "normalized_name": normalized_name,
+            "numbers": numbers,
+        }
+
+        items.append(item)
+
+    print(f"✅ {supplier}: загружено {len(items)} позиций")
+    return items
+
+
+def load_all_prices():
+    all_items = []
+
+    for supplier, filename in SUPPLIERS.items():
+        items = load_price_file(supplier, filename)
+        all_items.extend(items)
+
+    print(f"📦 Всего позиций загружено: {len(all_items)}")
+    return all_items
+
 
 # =========================
 # ТОЧКА ВХОДА
@@ -189,17 +149,16 @@ def main():
     print("🚀 Старт orchestrator.py")
     print("=" * 60)
 
-    check_data_directory()
-    check_price_files()
-    check_index_db()
+    check_environment()
+    query = read_manager_query()
 
-    parsed_query = read_user_query()
+    print("\n📥 Загрузка прайсов поставщиков")
+    all_items = load_all_prices()
 
-    print("\n🧠 Результат INPUT LAYER:")
-    print(parsed_query)
+    print("\n🧠 Поисковый слой подготовлен")
+    print("ℹ️ Следующий шаг — умный поиск по характеристикам")
 
-    print("\nℹ️ Следующий шаг: поиск по прайсам и index.db")
-    print("\n✅ ШАГ 1–3 УСПЕШНО ЗАВЕРШЕНЫ")
+    print("\n✅ ШАГ 4 УСПЕШНО ЗАВЕРШЁН")
 
 
 if __name__ == "__main__":
