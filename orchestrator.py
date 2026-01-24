@@ -52,17 +52,59 @@ def extract_numbers(text):
             res[k] = float(m.group(1).replace(",", "."))
     return res
 
+def is_url(t):
+    return t.startswith("http://") or t.startswith("https://")
+
 # =========================
-# ЗАПРОС МЕНЕДЖЕРА
+# ВХОДНОЙ ЗАПРОС
 # =========================
 
 def read_query():
     q = os.getenv("MANAGER_QUERY")
     if not q:
         fail("MANAGER_QUERY не задан")
-    q = q.strip()
-    print(f"📥 Запрос менеджера: {q}")
-    return q
+    return q.strip()
+
+def split_queries(raw):
+    raw = raw.replace(";", "\n")
+    return [q.strip() for q in raw.splitlines() if q.strip()]
+
+# =========================
+# ПАРСИНГ ССЫЛКИ
+# =========================
+
+def parse_product_page(url):
+    print(f"🌐 Парсинг ссылки: {url}")
+
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=20)
+    except Exception as e:
+        fail(f"Ошибка доступа к ссылке: {e}")
+
+    if r.status_code != 200:
+        fail(f"Страница недоступна ({r.status_code})")
+
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    texts = []
+
+    for tag in ["h1", "title"]:
+        el = soup.find(tag)
+        if el:
+            texts.append(el.get_text(" ", strip=True))
+
+    for el in soup.select("li, p, td"):
+        t = el.get_text(" ", strip=True)
+        if any(x in t.lower() for x in ["кг", "л", "уров", "квт", "мм", "см"]):
+            texts.append(t)
+
+    full_text = normalize(" ".join(texts))
+
+    return {
+        "type": full_text.split()[0] if full_text else "",
+        "numbers": extract_numbers(full_text),
+        "allow_analogs": False
+    }
 
 # =========================
 # SQL ПОИСК
@@ -73,11 +115,8 @@ def sql_search(parsed):
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    where = []
-    params = []
-
-    where.append("text LIKE ?")
-    params.append(f"%{parsed['type']}%")
+    where = ["text LIKE ?"]
+    params = [f"%{parsed['type']}%"]
 
     for k, v in parsed["numbers"].items():
         if parsed["allow_analogs"]:
@@ -99,7 +138,7 @@ def sql_search(parsed):
     return rows
 
 # =========================
-# ENTERO
+# ENTERO.RU
 # =========================
 
 def search_entero(name):
@@ -131,74 +170,79 @@ def search_entero(name):
 # =========================
 
 def main():
-    query = read_query()
-    qn = normalize(query)
-
-    parsed = {
-        "type": qn.split()[0],
-        "numbers": extract_numbers(qn),
-        "allow_analogs": "аналог" in qn
-    }
-
-    items = sql_search(parsed)
-
-    if not items:
-        print("❌ Не найдено ни у одного поставщика")
-        print("```")
-        print("\t".join(COLUMNS))
-        print("ИТОГО")
-        print("```")
-        return
-
-    if not parsed["allow_analogs"]:
-        items = items[:1]
-    else:
-        items = items[:3]
+    raw = read_query()
+    queries = split_queries(raw)
 
     rows = []
     totals = {"profit": [], "sum": [], "markup": [], "diff": []}
     n = 1
 
-    for it in items:
-        dealer = it["dealer_price"]
-        retail = it["retail_price"]
+    for q in queries:
+        if is_url(q):
+            parsed = parse_product_page(q)
+        else:
+            qn = normalize(q)
+            parsed = {
+                "type": qn.split()[0],
+                "numbers": extract_numbers(qn),
+                "allow_analogs": "аналог" in qn
+            }
 
-        profit = retail - dealer if dealer and retail else None
-        markup = (retail - dealer) / dealer * 100 if dealer and retail else None
-        total = retail
+        items = sql_search(parsed)
 
-        entero = search_entero(it["name"])
-        diff = None
-        if entero and entero["price"] and retail:
-            diff = (retail - entero["price"]) / entero["price"] * 100
+        if not items:
+            rows.append([
+                n,"","","❌ Не найдено","","","","","","",
+                "","","","","","","","",""
+            ])
+            n += 1
+            continue
 
-        if profit: totals["profit"].append(profit)
-        if total: totals["sum"].append(total)
-        if markup is not None: totals["markup"].append(markup)
-        if diff is not None: totals["diff"].append(diff)
+        if not parsed["allow_analogs"]:
+            items = items[:1]
+        else:
+            items = items[:3]
 
-        rows.append([
-            n,
-            it["supplier"],
-            it["article"],
-            it["name"],
-            "–",
-            it["availability"],
-            dealer or "",
-            "RUB" if dealer else "",
-            retail or "",
-            "RUB" if retail else "",
-            entero["price"] if entero else "❌ Не найдено",
-            f"{diff:+.0f}" if diff is not None else "",
-            f"{markup:.0f}" if markup else "",
-            f"{profit:.0f}" if profit else "",
-            f"{total:.0f}" if total else "",
-            "",
-            "",
-            "",
-            entero["link"] if entero else ""
-        ])
-        n += 1
+        for it in items:
+            dealer = it["dealer_price"]
+            retail = it["retail_price"]
+
+            profit = retail - dealer if dealer and retail else None
+            markup = (retail - dealer) / dealer * 100 if dealer and retail else None
+            total = retail
+
+            entero = search_entero(it["name"])
+            diff = None
+            if entero and entero["price"] and retail:
+                diff = (retail - entero["price"]) / entero["price"] * 100
+
+            if profit: totals["profit"].append(profit)
+            if total: totals["sum"].append(total)
+            if markup is not None: totals["markup"].append(markup)
+            if diff is not None: totals["diff"].append(diff)
+
+            rows.append([
+                n,
+                it["supplier"],
+                it["article"],
+                it["name"],
+                "–",
+                it["availability"],
+                dealer or "",
+                "RUB" if dealer else "",
+                retail or "",
+                "RUB" if retail else "",
+                entero["price"] if entero else "❌ Не найдено",
+                f"{diff:+.0f}" if diff is not None else "",
+                f"{markup:.0f}" if markup else "",
+                f"{profit:.0f}" if profit else "",
+                f"{total:.0f}" if total else "",
+                "",
+                "",
+                "",
+                entero["link"] if entero else ""
+            ])
+            n += 1
 
     print("```")
     print("\t".join(COLUMNS))
