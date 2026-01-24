@@ -4,6 +4,7 @@ import pandas as pd
 import re
 import requests
 from bs4 import BeautifulSoup
+from statistics import mean
 
 # =========================
 # КОНФИГУРАЦИЯ
@@ -29,6 +30,16 @@ COLUMNS = [
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
+BRAND_ALIASES = {
+    "electrolux professional": "electrolux",
+    "electrolux pro": "electrolux",
+    "electrolux": "electrolux",
+    "robot coupe": "robotcoupe",
+    "robot-coupe": "robotcoupe",
+    "abat": "abat",
+    "абат": "abat",
+}
+
 # =========================
 # УТИЛИТЫ
 # =========================
@@ -40,6 +51,13 @@ def fail(msg):
 def normalize(t):
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s×x]", " ", str(t).lower())).strip()
 
+def normalize_brand(name):
+    n = normalize(name)
+    for k, v in BRAND_ALIASES.items():
+        if k in n:
+            return v
+    return n.split()[0] if n else ""
+
 def to_float(v):
     try:
         return float(str(v).replace(",", "."))
@@ -48,82 +66,27 @@ def to_float(v):
 
 def extract_numbers(text):
     res = {}
-    for k, p in {
+    patterns = {
         "kg": r"(\d+(?:[.,]\d+)?)\s*кг",
         "liters": r"(\d+(?:[.,]\d+)?)\s*л",
         "levels": r"(\d+)\s*уров",
         "kw": r"(\d+(?:[.,]\d+)?)\s*квт",
-    }.items():
+    }
+    for k, p in patterns.items():
         m = re.search(p, text)
         if m:
             res[k] = float(m.group(1).replace(",", "."))
     return res
 
-def is_url(t):
-    return t.startswith("http://") or t.startswith("https://")
-
 # =========================
-# ПАРСИНГ ССЫЛКИ
+# ЗАПРОС
 # =========================
 
-def parse_product_page(url):
-    print(f"🌐 Парсинг страницы: {url}")
-
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
-    except Exception as e:
-        fail(f"Ошибка доступа к ссылке: {e}")
-
-    if r.status_code != 200:
-        fail(f"Страница недоступна, код {r.status_code}")
-
-    soup = BeautifulSoup(r.text, "html.parser")
-
-    texts = []
-
-    for tag in ["h1", "h2", "title"]:
-        el = soup.find(tag)
-        if el:
-            texts.append(el.get_text(" ", strip=True))
-
-    for el in soup.select("li, p, td"):
-        t = el.get_text(" ", strip=True)
-        if any(x in t.lower() for x in ["кг", "л", "уров", "квт", "мм", "см"]):
-            texts.append(t)
-
-    full_text = normalize(" ".join(texts))
-    numbers = extract_numbers(full_text)
-
-    print("✅ Данные извлечены из ссылки")
-
-    return {
-        "raw": url,
-        "type": full_text.split()[0] if full_text else "",
-        "numbers": numbers,
-        "allow_analogs": False
-    }
-
-# =========================
-# ПАРСИНГ ЗАПРОСА
-# =========================
-
-def split_queries(raw):
-    raw = raw.replace(";", "\n")
-    return [q.strip() for q in raw.splitlines() if q.strip()]
-
-def parse_query(q):
-    if is_url(q):
-        return parse_product_page(q)
-
-    qn = normalize(q)
-    allow_analogs = any(w in qn for w in ["аналог", "аналоги", "можно аналог"])
-
-    return {
-        "raw": q,
-        "type": qn.split()[0],
-        "numbers": extract_numbers(qn),
-        "allow_analogs": allow_analogs
-    }
+def read_query():
+    q = os.getenv("MANAGER_QUERY")
+    if not q:
+        fail("MANAGER_QUERY не задан")
+    return q.strip()
 
 # =========================
 # ПРАЙСЫ
@@ -139,7 +102,8 @@ def load_prices():
                 "source": src,
                 "row": r.to_dict(),
                 "text": text,
-                "numbers": extract_numbers(text)
+                "numbers": extract_numbers(text),
+                "brand": normalize_brand(r.get("Наименование",""))
             })
     return items
 
@@ -153,7 +117,7 @@ def is_match(q_nums, i_nums, allow_analogs):
         if iv is None:
             return False
         if allow_analogs:
-            if iv < qv or iv > qv * 1.2:
+            if iv < qv * 0.8 or iv > qv * 1.2:
                 return False
         else:
             if iv != qv:
@@ -182,75 +146,117 @@ def select_items(candidates, allow_analogs):
         return [candidates[0]]
 
     base = candidates[0]
-    brand = normalize(base["row"].get("Наименование","")).split()[0]
+    same_brand = [c for c in candidates if c["brand"] == base["brand"]]
+    other = [c for c in candidates if c["brand"] != base["brand"]]
 
-    same, other = [], []
-    for it in candidates[1:]:
-        name = normalize(it["row"].get("Наименование",""))
-        if brand and brand in name:
-            same.append(it)
-        else:
-            other.append(it)
-
-    out = [base]
-    out.extend(same[:2])
+    out = same_brand[:3]
     if len(out) < 3:
         out.extend(other[:3-len(out)])
 
     return out[:3]
 
 # =========================
+# ENTERO
+# =========================
+
+def search_entero(name):
+    q = "+".join(name.split())
+    url = f"https://entero.ru/search/?q={q}"
+    r = requests.get(url, headers=HEADERS, timeout=20)
+    if r.status_code != 200:
+        return None
+
+    soup = BeautifulSoup(r.text, "html.parser")
+    card = soup.select_one("a.catalog-item__name")
+    if not card:
+        return None
+
+    link = "https://entero.ru" + card.get("href")
+    page = requests.get(link, headers=HEADERS, timeout=20)
+    if page.status_code != 200:
+        return None
+
+    s = BeautifulSoup(page.text, "html.parser")
+    price_tag = s.select_one(".product-buy__price")
+    price = to_float(price_tag.text) if price_tag else None
+
+    return {"price": price, "link": link}
+
+# =========================
 # MAIN
 # =========================
 
 def main():
-    raw = os.getenv("MANAGER_QUERY")
-    if not raw:
-        fail("MANAGER_QUERY не задан")
+    query = read_query()
+    allow_analogs = "аналог" in normalize(query)
 
-    queries = split_queries(raw)
+    parsed = {
+        "type": normalize(query).split()[0],
+        "numbers": extract_numbers(normalize(query)),
+        "allow_analogs": allow_analogs
+    }
+
     items = load_prices()
+    candidates = find_candidates(parsed, items)
+    selected = select_items(candidates, allow_analogs)
 
     rows = []
+    totals = {"profit": [], "sum": [], "markup": [], "diff": []}
+
     n = 1
+    for it in selected:
+        r = it["row"]
+        dealer = to_float(r.get("Цена дилерская"))
+        retail = to_float(r.get("Цена розничная"))
+        profit = retail - dealer if dealer and retail else None
 
-    for q in queries:
-        parsed = parse_query(q)
-        candidates = find_candidates(parsed, items)
-        selected = select_items(candidates, parsed["allow_analogs"])
+        entero = search_entero(r.get("Наименование",""))
 
-        if not selected:
-            continue
+        diff = None
+        if entero and entero["price"] and retail:
+            diff = (retail - entero["price"]) / entero["price"] * 100
 
-        for it in selected:
-            r = it["row"]
-            rows.append([
-                n,
-                it["source"],
-                r.get("Артикул",""),
-                r.get("Наименование",""),
-                "–",
-                r.get("Наличие",""),
-                r.get("Цена дилерская",""),
-                "RUB",
-                r.get("Цена розничная",""),
-                "RUB",
-                "❌ Не найдено",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                ""
-            ])
-            n += 1
+        markup = (retail - dealer) / dealer * 100 if dealer and retail else None
+        total = retail if retail else None
+
+        if profit: totals["profit"].append(profit)
+        if total: totals["sum"].append(total)
+        if markup is not None: totals["markup"].append(markup)
+        if diff is not None: totals["diff"].append(diff)
+
+        rows.append([
+            n, it["source"], r.get("Артикул",""), r.get("Наименование",""),
+            "–", r.get("Наличие",""),
+            dealer or "", "RUB", retail or "", "RUB",
+            entero["price"] if entero else "❌ Не найдено",
+            f"{diff:+.0f}" if diff is not None else "",
+            f"{markup:.0f}" if markup else "",
+            f"{profit:.0f}" if profit else "",
+            f"{total:.0f}" if total else "",
+            "", "", "", entero["link"] if entero else ""
+        ])
+        n += 1
 
     print("```")
     print("\t".join(COLUMNS))
     for r in rows:
         print("\t".join(map(str, r)))
+
+    print("\t".join([
+        "ИТОГО","","","",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        f"{mean(totals['diff']):+.0f}" if totals["diff"] else "",
+        f"{mean(totals['markup']):.0f}" if totals["markup"] else "",
+        f"{sum(totals['profit']):.0f}" if totals["profit"] else "",
+        f"{sum(totals['sum']):.0f}" if totals["sum"] else "",
+        "","","",""
+    ]))
     print("```")
     print("✅ Подбор оборудования готов")
 
