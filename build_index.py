@@ -1,188 +1,123 @@
 import os
 import sqlite3
-import yadisk
 import pandas as pd
 import re
-import tempfile
-import subprocess
-from pathlib import Path
+import json
 
-YANDEX_TOKEN = os.environ["YANDEX_TOKEN"]
-INDEX_DB = "index.db"
+# =========================
+# КОНФИГУРАЦИЯ
+# =========================
 
-PRICES = {
-    "equip": "/prices/equip/equip.xlsx",
-    "rosholod": "/prices/rosholod/rosholod.xls",
-    "rp": "/prices/rp/rp.xls",
-    "smirnov": "/prices/smirnov/smirnov.xlsx",
-    "trade_design": "/prices/trade_design/td.xlsx",
-    "bio": "/prices/bio/bio.xlsx",
+DATA_DIR = "data"
+DB_PATH = "index.db"
+
+SUPPLIERS = {
+    "equip": "equip.xlsx",
+    "bio": "bio.xlsx",
+    "rp": "rp.xlsx",
+    "rosholod": "rosholod.xlsx",
+    "smirnov": "smirnov.xlsx",
+    "trade_design": "td.xlsx",
 }
 
-# ================== HELPERS ==================
+# =========================
+# УТИЛИТЫ
+# =========================
 
 def normalize(text):
-    if not text:
-        return ""
-    text = str(text).lower().replace("ё", "е")
-    text = re.sub(r"[^a-zа-я0-9 ]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s×x]", " ", str(text).lower())).strip()
 
 def extract_numbers(text):
-    if not text:
-        return []
-    out = []
-    for m in re.findall(
-        r"(\d+(?:[.,]\d+)?)\s*(кг|kg|л|l|мм|см|cm|м|kw|квт)?",
-        str(text).lower()
-    ):
-        out.append((float(m[0].replace(",", ".")), m[1] or ""))
-    return out
+    res = {}
+    patterns = {
+        "kg": r"(\d+(?:[.,]\d+)?)\s*кг",
+        "liters": r"(\d+(?:[.,]\d+)?)\s*л",
+        "levels": r"(\d+)\s*уров",
+        "kw": r"(\d+(?:[.,]\d+)?)\s*квт",
+    }
+    for k, p in patterns.items():
+        m = re.search(p, text)
+        if m:
+            res[k] = float(m.group(1).replace(",", "."))
+    return res
 
-# ================== DB ==================
+def to_float(v):
+    try:
+        return float(str(v).replace(",", "."))
+    except:
+        return None
 
-def init_db():
-    conn = sqlite3.connect(INDEX_DB)
-    cur = conn.cursor()
-
-    cur.executescript("""
-    DROP TABLE IF EXISTS items;
-    DROP TABLE IF EXISTS tokens;
-    DROP TABLE IF EXISTS numbers;
-
-    CREATE TABLE items (
-        item_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        source TEXT,
-        article TEXT,
-        name_raw TEXT,
-        name_norm TEXT
-    );
-
-    CREATE TABLE tokens (
-        item_id INTEGER,
-        token TEXT
-    );
-
-    CREATE TABLE numbers (
-        item_id INTEGER,
-        value REAL,
-        unit TEXT
-    );
-    """)
-
-    conn.commit()
-    return conn
-
-# ================== XLS → XLSX (ТОЛЬКО RP) ==================
-
-def convert_xls_to_xlsx(xls_path):
-    xls_path = Path(xls_path)
-    xlsx_path = xls_path.with_suffix(".xlsx")
-
-    subprocess.run(
-        [
-            "libreoffice",
-            "--headless",
-            "--convert-to",
-            "xlsx",
-            "--outdir",
-            str(xls_path.parent),
-            str(xls_path),
-        ],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-    return xlsx_path
-
-# ================== BUILD INDEX ==================
+# =========================
+# СБОРКА ИНДЕКСА
+# =========================
 
 def build_index():
-    print("🧠 Строим индекс")
-    y = yadisk.YaDisk(token=YANDEX_TOKEN)
+    if os.path.exists(DB_PATH):
+        os.remove(DB_PATH)
 
-    conn = init_db()
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    for source, remote_path in PRICES.items():
-        print(f"\n📦 {source}")
+    cur.execute("""
+        CREATE TABLE items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            supplier TEXT,
+            article TEXT,
+            name TEXT,
+            normalized TEXT,
+            brand TEXT,
+            numbers TEXT,
+            dealer_price REAL,
+            retail_price REAL,
+            stock TEXT,
+            link TEXT
+        )
+    """)
 
-        if not y.exists(remote_path):
-            print(f"⚠️ Файл не найден: {remote_path}")
+    total = 0
+
+    for supplier, file in SUPPLIERS.items():
+        path = os.path.join(DATA_DIR, file)
+        if not os.path.isfile(path):
+            print(f"⚠️ Пропущен {file}")
             continue
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            local_path = Path(tmpdir) / Path(remote_path).name
-            y.download(remote_path, str(local_path))
+        df = pd.read_excel(path, dtype=str).fillna("")
+        print(f"📄 {supplier}: {len(df)} строк")
 
-            try:
-                # 🔥 ВАЖНО: конвертируем ТОЛЬКО RP
-                if source == "rp" and local_path.suffix == ".xls":
-                    xlsx_path = convert_xls_to_xlsx(local_path)
-                    df = pd.read_excel(xlsx_path, engine="openpyxl")
-                else:
-                    # 🔒 ВСЁ ОСТАЛЬНОЕ — КАК БЫЛО
-                    if local_path.suffix == ".xls":
-                        df = pd.read_excel(local_path, engine="xlrd")
-                    else:
-                        df = pd.read_excel(local_path, engine="openpyxl")
+        for _, r in df.iterrows():
+            text = normalize(" ".join(map(str, r.values)))
+            numbers = extract_numbers(text)
 
-            except Exception as e:
-                print(f"❌ Ошибка чтения {source}: {e}")
-                continue
-
-            print(f"строк: {len(df)}")
-
-            for _, row in df.iterrows():
-                name = (
-                    row.get("Наименование")
-                    or row.get("Название")
-                    or row.get("ТОВАР")
-                    or row.get("name")
-                    or ""
+            cur.execute("""
+                INSERT INTO items (
+                    supplier, article, name, normalized, brand,
+                    numbers, dealer_price, retail_price, stock, link
                 )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                supplier,
+                r.get("Артикул", ""),
+                r.get("Наименование", ""),
+                text,
+                text.split()[0] if text else "",
+                json.dumps(numbers, ensure_ascii=False),
+                to_float(r.get("Цена дилерская") or r.get("Дилерская цена")),
+                to_float(r.get("Цена розничная") or r.get("Розничная цена")),
+                r.get("Наличие", ""),
+                r.get("Ссылка", "")
+            ))
 
-                article = (
-                    row.get("Артикул")
-                    or row.get("Код")
-                    or row.get("article")
-                    or ""
-                )
+            total += 1
 
-                name = str(name).strip()
-                article = str(article).strip()
-
-                if not name:
-                    continue
-
-                name_norm = normalize(name)
-
-                cur.execute(
-                    "INSERT INTO items (source, article, name_raw, name_norm) VALUES (?,?,?,?)",
-                    (source, article, name, name_norm),
-                )
-                item_id = cur.lastrowid
-
-                for token in name_norm.split():
-                    cur.execute(
-                        "INSERT INTO tokens (item_id, token) VALUES (?,?)",
-                        (item_id, token),
-                    )
-
-                for value, unit in extract_numbers(name):
-                    cur.execute(
-                        "INSERT INTO numbers (item_id, value, unit) VALUES (?,?,?)",
-                        (item_id, value, unit),
-                    )
-
-            conn.commit()
-            print(f"✅ {source} готов")
-
+    conn.commit()
     conn.close()
-    print("\n🎉 Индекс index.db успешно создан")
 
-# ================== ENTRY ==================
+    print(f"✅ index.db создан. Записей: {total}")
+
+# =========================
+# MAIN
+# =========================
 
 if __name__ == "__main__":
     build_index()
