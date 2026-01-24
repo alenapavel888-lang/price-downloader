@@ -2,8 +2,6 @@ import os
 import sys
 import pandas as pd
 import re
-import requests
-from bs4 import BeautifulSoup
 
 DATA_DIR = "data"
 
@@ -22,8 +20,6 @@ COLUMNS = [
     "Цена Entero","Разница %","Наценка %","Валовая прибыль",
     "Сумма","Размеры (Ш×Г×В)","Вес (кг)","Объём (м³)","Ссылка"
 ]
-
-HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # =========================
 # УТИЛИТЫ
@@ -118,6 +114,10 @@ def is_match(q_nums, i_nums, allow_analogs):
             return False
     return True
 
+def dealer_price(it):
+    r = it["row"]
+    return to_float(r.get("Цена дилерская") or r.get("Дилерская цена")) or 1e12
+
 def find_matches(parsed, items):
     matches = []
     for it in items:
@@ -128,20 +128,16 @@ def find_matches(parsed, items):
         matches.append(it)
     return matches
 
-def dealer_price(it):
-    r = it["row"]
-    return to_float(r.get("Цена дилерская") or r.get("Дилерская цена")) or 1e12
-
 def select_best_and_analogs(matches, allow_analogs):
     matches = sorted(matches, key=dealer_price)
     if not allow_analogs:
         return matches[:1]
 
     best = matches[0]
+    brand = normalize(best["row"].get("Наименование","")).split()[0]
+
     same_brand = []
     other_brand = []
-
-    brand = normalize(best["row"].get("Наименование","")).split()[0]
 
     for it in matches[1:]:
         name = normalize(it["row"].get("Наименование",""))
@@ -154,7 +150,7 @@ def select_best_and_analogs(matches, allow_analogs):
     result.extend(same_brand[:2])
 
     if len(result) < 3:
-        result.extend(other_brand[:3-len(result)])
+        result.extend(other_brand[:3 - len(result)])
 
     return result[:3]
 
@@ -171,10 +167,10 @@ def main():
     items = load_prices()
     matches = find_matches(parsed, items)
 
+    print("```")
+    print("\t".join(COLUMNS))
+
     if not matches:
-        print("❌ Не найдено (нет подходящих позиций)")
-        print("```")
-        print("\t".join(COLUMNS))
         print("ИТОГО")
         print("```")
         print("✅ Подбор оборудования готов")
@@ -182,14 +178,13 @@ def main():
 
     selected = select_best_and_analogs(matches, parsed["allow_analogs"])
 
-    print("```")
-    print("\t".join(COLUMNS))
     for i, it in enumerate(selected, 1):
         r = it["row"]
         name = r.get("Наименование","")
         if i > 1:
             name += " (АНАЛОГ)"
-        print("\t".join(map(str, [
+
+        row = [
             i,
             it["source"],
             r.get("Артикул",""),
@@ -209,7 +204,10 @@ def main():
             "",
             "",
             ""
-        ]))
+        ]
+
+        print("\t".join(map(str, row)))
+
     print("```")
     print("✅ Подбор оборудования готов")
 
