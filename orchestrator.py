@@ -5,10 +5,6 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
-# =========================
-# КОНФИГУРАЦИЯ
-# =========================
-
 DATA_DIR = "data"
 
 SUPPLIERS = {
@@ -47,12 +43,11 @@ def to_float(v):
         return None
 
 # =========================
-# ШАГ 12 — ПАРСИНГ ЗАПРОСА
+# ПАРСИНГ ЗАПРОСА
 # =========================
 
-def parse_manager_query(query: str):
+def parse_manager_query(query):
     q = normalize(query)
-
     allow_analogs = any(w in q for w in ["аналог", "аналоги"])
 
     numbers = {}
@@ -63,141 +58,121 @@ def parse_manager_query(query: str):
         "kw": r"(\d+(?:[.,]\d+)?)\s*квт",
     }
 
-    for key, pattern in patterns.items():
-        m = re.search(pattern, q)
+    for k, p in patterns.items():
+        m = re.search(p, q)
         if m:
-            numbers[key] = float(m.group(1).replace(",", "."))
+            numbers[k] = float(m.group(1).replace(",", "."))
 
-    equipment_type = q.split()[0] if q else ""
+    eq_type = q.split()[0] if q else ""
 
     return {
         "raw": query,
-        "type": equipment_type,
+        "type": eq_type,
         "numbers": numbers,
         "allow_analogs": allow_analogs
     }
 
 # =========================
-# ЗАПРОС
-# =========================
-
-def read_query():
-    q = os.getenv("MANAGER_QUERY")
-    if not q:
-        fail("MANAGER_QUERY не задан")
-    return q.strip()
-
-# =========================
 # ЗАГРУЗКА ПРАЙСОВ
 # =========================
 
-def extract_numbers_from_text(text):
-    result = {}
-    for key, pattern in {
+def extract_numbers(text):
+    res = {}
+    for k, p in {
         "kg": r"(\d+(?:[.,]\d+)?)\s*кг",
         "liters": r"(\d+(?:[.,]\d+)?)\s*л",
         "levels": r"(\d+)\s*уров",
         "kw": r"(\d+(?:[.,]\d+)?)\s*квт",
     }.items():
-        m = re.search(pattern, text)
+        m = re.search(p, text)
         if m:
-            result[key] = float(m.group(1).replace(",", "."))
-    return result
+            res[k] = float(m.group(1).replace(",", "."))
+    return res
 
 def load_prices():
     items = []
     for src, file in SUPPLIERS.items():
-        path = os.path.join(DATA_DIR, file)
-        df = pd.read_excel(path, dtype=str).fillna("")
+        df = pd.read_excel(os.path.join(DATA_DIR, file), dtype=str).fillna("")
         for _, r in df.iterrows():
             text = normalize(" ".join(map(str, r.values)))
             items.append({
                 "source": src,
                 "row": r.to_dict(),
                 "text": text,
-                "numbers": extract_numbers_from_text(text)
+                "numbers": extract_numbers(text)
             })
     return items
 
 # =========================
-# ШАГ 14 — УМНЫЙ ПОИСК
+# ПОИСК И АНАЛОГИ
 # =========================
 
-def is_match(query_nums, item_nums, allow_analogs):
-    for k, qv in query_nums.items():
-        iv = item_nums.get(k)
-        if iv is None:
+def is_match(q_nums, i_nums, allow_analogs):
+    for k, qv in q_nums.items():
+        iv = i_nums.get(k)
+        if iv is None or iv < qv:
             return False
-        if iv < qv:
+        if allow_analogs and iv > qv * 1.2:
             return False
-        if allow_analogs:
-            if iv > qv * 1.2:
-                return False
-        else:
-            if iv != qv:
-                return False
+        if not allow_analogs and iv != qv:
+            return False
     return True
 
-def find_best_match(parsed_query, items):
-    candidates = []
-
+def find_matches(parsed, items):
+    matches = []
     for it in items:
-        if parsed_query["type"] not in it["text"]:
+        if parsed["type"] not in it["text"]:
             continue
-        if not is_match(parsed_query["numbers"], it["numbers"], parsed_query["allow_analogs"]):
+        if not is_match(parsed["numbers"], it["numbers"], parsed["allow_analogs"]):
             continue
-        candidates.append(it)
+        matches.append(it)
+    return matches
 
-    if not candidates:
-        return None
+def dealer_price(it):
+    r = it["row"]
+    return to_float(r.get("Цена дилерская") or r.get("Дилерская цена")) or 1e12
 
-    def dealer_price(it):
-        r = it["row"]
-        return to_float(r.get("Цена дилерская") or r.get("Дилерская цена")) or 1e12
+def select_best_and_analogs(matches, allow_analogs):
+    matches = sorted(matches, key=dealer_price)
+    if not allow_analogs:
+        return matches[:1]
 
-    return min(candidates, key=dealer_price)
+    best = matches[0]
+    same_brand = []
+    other_brand = []
 
-# =========================
-# ENTERO.RU
-# =========================
+    brand = normalize(best["row"].get("Наименование","")).split()[0]
 
-def search_entero(name):
-    query = "+".join(name.split())
-    url = f"https://entero.ru/search/?q={query}"
+    for it in matches[1:]:
+        name = normalize(it["row"].get("Наименование",""))
+        if brand and brand in name:
+            same_brand.append(it)
+        else:
+            other_brand.append(it)
 
-    r = requests.get(url, headers=HEADERS, timeout=20)
-    if r.status_code != 200:
-        return None
+    result = [best]
+    result.extend(same_brand[:2])
 
-    soup = BeautifulSoup(r.text, "html.parser")
-    cards = soup.select("a.catalog-item__name")
-    if not cards:
-        return None
+    if len(result) < 3:
+        result.extend(other_brand[:3-len(result)])
 
-    link = "https://entero.ru" + cards[0].get("href")
-    page = requests.get(link, headers=HEADERS, timeout=20)
-    if page.status_code != 200:
-        return None
-
-    s = BeautifulSoup(page.text, "html.parser")
-    price_tag = s.select_one(".product-buy__price")
-    price = to_float(price_tag.text) if price_tag else None
-
-    return {"price": price, "link": link}
+    return result[:3]
 
 # =========================
 # MAIN
 # =========================
 
 def main():
-    query = read_query()
+    query = os.getenv("MANAGER_QUERY")
+    if not query:
+        fail("MANAGER_QUERY не задан")
+
     parsed = parse_manager_query(query)
-
     items = load_prices()
-    best = find_best_match(parsed, items)
+    matches = find_matches(parsed, items)
 
-    if not best:
-        print("❌ Не найдено (причина: нет подходящих характеристик в прайсах)")
+    if not matches:
+        print("❌ Не найдено (нет подходящих позиций)")
         print("```")
         print("\t".join(COLUMNS))
         print("ИТОГО")
@@ -205,9 +180,36 @@ def main():
         print("✅ Подбор оборудования готов")
         return
 
-    entero = search_entero(best["row"].get("Наименование",""))
+    selected = select_best_and_analogs(matches, parsed["allow_analogs"])
+
     print("```")
     print("\t".join(COLUMNS))
+    for i, it in enumerate(selected, 1):
+        r = it["row"]
+        name = r.get("Наименование","")
+        if i > 1:
+            name += " (АНАЛОГ)"
+        print("\t".join(map(str, [
+            i,
+            it["source"],
+            r.get("Артикул",""),
+            name,
+            "–",
+            r.get("Наличие",""),
+            r.get("Цена дилерская",""),
+            "RUB",
+            r.get("Цена розничная",""),
+            "RUB",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+        ]))
     print("```")
     print("✅ Подбор оборудования готов")
 
