@@ -1,15 +1,14 @@
 import os
 import sys
-import sqlite3
 import pandas as pd
 import re
+from statistics import mean
 
 # =========================
 # КОНФИГУРАЦИЯ
 # =========================
 
 DATA_DIR = "data"
-INDEX_DB_PATH = "index.db"
 TOLERANCE = 0.20  # ±20%
 
 SUPPLIERS = {
@@ -21,98 +20,78 @@ SUPPLIERS = {
     "trade_design": "td.xlsx",
 }
 
+COLUMNS_ORDER = [
+    "№",
+    "Источник",
+    "Артикул",
+    "Наименование",
+    "Нужно",
+    "На складе",
+    "Цена дилерская",
+    "Валюта",
+    "Цена розничная",
+    "Валюта",
+    "Цена Entero",
+    "Разница %",
+    "Наценка %",
+    "Валовая прибыль",
+    "Сумма",
+    "Размеры (Ш×Г×В)",
+    "Вес (кг)",
+    "Объём (м³)",
+    "Ссылка",
+]
+
 # =========================
-# БАЗОВЫЕ ПРОВЕРКИ
+# ВСПОМОГАТЕЛЬНОЕ
 # =========================
 
-def fail(message: str):
-    print(f"❌ ОШИБКА: {message}")
+def fail(msg):
+    print(f"❌ ОШИБКА: {msg}")
     sys.exit(1)
 
 
-def check_environment():
-    print("🔍 Проверка окружения")
-
-    if not os.path.isdir(DATA_DIR):
-        fail("Папка data/ не найдена")
-
-    for supplier, filename in SUPPLIERS.items():
-        path = os.path.join(DATA_DIR, filename)
-        if not os.path.isfile(path):
-            fail(f"Прайс {supplier} не найден: {filename}")
-
-    if not os.path.isfile(INDEX_DB_PATH):
-        fail("index.db не найден")
-
-    print("✅ Окружение готово")
+def normalize(text):
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s×x]", " ", str(text).lower())).strip()
 
 
-def read_manager_query():
-    query = os.getenv("MANAGER_QUERY")
-    if not query or not query.strip():
-        fail("MANAGER_QUERY не задан")
-    query = query.strip()
-    print(f"📥 Запрос менеджера: «{query}»")
-    return query
-
-
-# =========================
-# НОРМАЛИЗАЦИЯ И ПАРСИНГ
-# =========================
-
-def normalize_text(text: str) -> str:
-    if not isinstance(text, str):
-        return ""
-    text = text.lower()
-    text = re.sub(r"[^\w\s×x]", " ", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def extract_numbers(text: str):
-    """
-    Извлекаем ТОЛЬКО фактические числовые характеристики
-    """
-    if not text:
-        return {}
-
-    result = {}
-
+def extract_numbers(text):
     patterns = {
         "kg": r"(\d+(?:[.,]\d+)?)\s*кг",
-        "liters": r"(\d+(?:[.,]\d+)?)\s*л",
+        "l": r"(\d+(?:[.,]\d+)?)\s*л",
         "levels": r"(\d+)\s*уров",
-        "kw": r"(\d+(?:[.,]\d+)?)\s*квт",
     }
-
-    for key, pattern in patterns.items():
-        match = re.search(pattern, text)
-        if match:
-            value = match.group(1).replace(",", ".")
-            result[key] = float(value)
-
-    return result
+    out = {}
+    for k, p in patterns.items():
+        m = re.search(p, text)
+        if m:
+            out[k] = float(m.group(1).replace(",", "."))
+    return out
 
 
-def parse_manager_query(query: str):
-    normalized = normalize_text(query)
+def within(v1, v2):
+    return v1 * (1 - TOLERANCE) <= v2 <= v1 * (1 + TOLERANCE)
 
-    allow_analogs = "аналог" in normalized
 
-    numbers = extract_numbers(normalized)
+# =========================
+# ЗАПРОС МЕНЕДЖЕРА
+# =========================
 
-    equipment_type = normalized.split()[0] if normalized else ""
+def read_query():
+    q = os.getenv("MANAGER_QUERY")
+    if not q:
+        fail("MANAGER_QUERY не задан")
+    return q.strip()
 
-    print("\n🔎 Разбор запроса:")
-    print(f"• Тип оборудования: {equipment_type}")
-    print(f"• Числовые параметры: {numbers}")
-    print(f"• Аналоги разрешены: {'ДА' if allow_analogs else 'НЕТ'}")
 
+def parse_query(q):
+    norm = normalize(q)
     return {
-        "raw": query,
-        "type": equipment_type,
-        "numbers": numbers,
-        "allow_analogs": allow_analogs,
+        "raw": q,
+        "type": norm.split()[0],
+        "numbers": extract_numbers(norm),
+        "qty": int(re.search(r"(\d+)\s*шт", norm).group(1)) if re.search(r"\d+\s*шт", norm) else None,
+        "allow_analogs": "аналог" in norm,
     }
 
 
@@ -120,120 +99,177 @@ def parse_manager_query(query: str):
 # ЗАГРУЗКА ПРАЙСОВ
 # =========================
 
-def load_price_file(supplier: str, filename: str):
-    path = os.path.join(DATA_DIR, filename)
-    print(f"📄 Загрузка прайса {supplier}: {filename}")
-
-    try:
-        df = pd.read_excel(path, dtype=str)
-    except Exception as e:
-        fail(f"Ошибка чтения {filename}: {e}")
-
-    df = df.fillna("")
+def load_prices():
     items = []
-
-    for _, row in df.iterrows():
-        row_text = " ".join(map(str, row.values))
-        normalized = normalize_text(row_text)
-        numbers = extract_numbers(normalized)
-
-        items.append({
-            "supplier": supplier,
-            "row": row.to_dict(),
-            "text": row_text,
-            "normalized": normalized,
-            "numbers": numbers,
-        })
-
-    print(f"✅ {supplier}: загружено {len(items)} позиций")
+    for src, file in SUPPLIERS.items():
+        path = os.path.join(DATA_DIR, file)
+        df = pd.read_excel(path, dtype=str).fillna("")
+        for _, r in df.iterrows():
+            text = " ".join(map(str, r.values))
+            items.append({
+                "source": src,
+                "row": r.to_dict(),
+                "text": text,
+                "norm": normalize(text),
+                "nums": extract_numbers(normalize(text)),
+            })
     return items
 
 
-def load_all_prices():
-    all_items = []
-
-    for supplier, filename in SUPPLIERS.items():
-        all_items.extend(load_price_file(supplier, filename))
-
-    print(f"📦 Всего позиций загружено: {len(all_items)}")
-    return all_items
-
-
 # =========================
-# УМНЫЙ ПОИСК (ШАГ 5)
+# ПОИСК
 # =========================
 
-def within_tolerance(requested, actual):
-    return requested * (1 - TOLERANCE) <= actual <= requested * (1 + TOLERANCE)
-
-
-def smart_search(parsed_query, items):
-    matches = []
-
-    for item in items:
+def search(parsed, items):
+    found = []
+    for it in items:
+        if parsed["type"] not in it["norm"]:
+            continue
         ok = True
-
-        # Тип оборудования
-        if parsed_query["type"] and parsed_query["type"] not in item["normalized"]:
-            ok = False
-
-        # Числовые характеристики
-        for key, req_val in parsed_query["numbers"].items():
-            actual = item["numbers"].get(key)
-            if actual is None or not within_tolerance(req_val, actual):
+        for k, v in parsed["numbers"].items():
+            if k not in it["nums"] or not within(v, it["nums"][k]):
                 ok = False
                 break
-
         if ok:
-            matches.append(item)
-
-    print(f"\n🔍 Найдено совпадений: {len(matches)}")
-    return matches
+            found.append(it)
+    return found
 
 
-def choose_results(matches, allow_analogs):
-    if not matches:
+def choose(found, allow_analogs):
+    if not found:
         return []
-
-    # Чем больше совпавших характеристик — тем лучше
-    matches.sort(key=lambda x: len(x["numbers"]), reverse=True)
-
-    return matches[:3] if allow_analogs else matches[:1]
+    found.sort(key=lambda x: len(x["nums"]), reverse=True)
+    return found[:3] if allow_analogs else found[:1]
 
 
 # =========================
-# ТОЧКА ВХОДА
+# ИЗВЛЕЧЕНИЕ ФАКТОВ
+# =========================
+
+def pick(row, *keys):
+    for k in keys:
+        if k in row and row[k]:
+            return row[k]
+    return ""
+
+
+# =========================
+# ТАБЛИЦА КП
+# =========================
+
+def build_table(results, parsed):
+    rows = []
+    totals = {
+        "qty": 0,
+        "profit": 0,
+        "sum": 0,
+        "weight": 0,
+        "volume": 0,
+        "diff": [],
+        "markup": [],
+    }
+
+    for i, r in enumerate(results, 1):
+        row = r["row"]
+
+        dealer = float(pick(row, "Цена дилерская", "Цена")) if pick(row, "Цена дилерская", "Цена") else None
+        retail = float(pick(row, "Цена розничная")) if pick(row, "Цена розничная") else None
+        qty = parsed["qty"]
+
+        profit = retail - dealer if dealer and retail else None
+        total = retail * qty if retail and qty else None
+
+        diff = ((retail - None) / None * 100) if False else None
+        markup = ((retail - dealer) / dealer * 100) if dealer and retail else None
+
+        if qty:
+            totals["qty"] += qty
+        if profit:
+            totals["profit"] += profit
+        if total:
+            totals["sum"] += total
+        if markup is not None:
+            totals["markup"].append(markup)
+
+        rows.append([
+            i,
+            r["source"],
+            pick(row, "Артикул", "Код"),
+            pick(row, "Наименование", "Название"),
+            qty if qty else "–",
+            pick(row, "Остаток", "Наличие", "Под заказ"),
+            dealer if dealer else "",
+            "RUB" if dealer else "",
+            retail if retail else "",
+            "RUB" if retail else "",
+            "",
+            "",
+            round(markup, 2) if markup is not None else "",
+            profit if profit else "",
+            total if total else "",
+            "",
+            "",
+            "",
+            "",
+        ])
+
+    # ИТОГО
+    rows.append([
+        "ИТОГО",
+        "",
+        "",
+        "",
+        totals["qty"] if totals["qty"] else "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        round(mean(totals["markup"]), 2) if totals["markup"] else "",
+        totals["profit"] if totals["profit"] else "",
+        totals["sum"] if totals["sum"] else "",
+        "",
+        "",
+        "",
+        "",
+    ])
+
+    return rows
+
+
+# =========================
+# ВЫВОД
+# =========================
+
+def print_table(rows):
+    print("\n```")
+    print("\t".join(COLUMNS_ORDER))
+    for r in rows:
+        print("\t".join(map(str, r)))
+    print("```")
+    print("\n✅ Подбор оборудования готов")
+
+
+# =========================
+# MAIN
 # =========================
 
 def main():
-    print("🚀 Старт orchestrator.py")
-    print("=" * 60)
+    query = read_query()
+    parsed = parse_query(query)
+    items = load_prices()
+    found = search(parsed, items)
+    chosen = choose(found, parsed["allow_analogs"])
 
-    check_environment()
-    query = read_manager_query()
-
-    parsed_query = parse_manager_query(query)
-
-    print("\n📥 Загрузка прайсов поставщиков")
-    all_items = load_all_prices()
-
-    print("\n🧠 Выполняется умный поиск")
-    matches = smart_search(parsed_query, all_items)
-    results = choose_results(matches, parsed_query["allow_analogs"])
-
-    if not results:
-        print("❌ Не найдено ни одной позиции по заданным характеристикам")
+    if not chosen:
+        print("❌ Не найдено ни у одного поставщика")
         print("✅ Подбор оборудования готов")
         return
 
-    print("\n🎯 РЕЗУЛЬТАТ ПОДБОРА:")
-    for i, item in enumerate(results, 1):
-        tag = "АНАЛОГ" if parsed_query["allow_analogs"] and i > 1 else "ОСНОВНОЙ"
-        print(f"\n#{i} [{tag}] Поставщик: {item['supplier']}")
-        print(item["text"][:300], "...")
-
-    print("\n✅ ШАГ 5 УСПЕШНО ЗАВЕРШЁН")
-    print("✅ Подбор оборудования готов")
+    table = build_table(chosen, parsed)
+    print_table(table)
 
 
 if __name__ == "__main__":
