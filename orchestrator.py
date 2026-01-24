@@ -2,6 +2,8 @@ import os
 import sys
 import pandas as pd
 import re
+import requests
+from bs4 import BeautifulSoup
 from statistics import mean
 
 # =========================
@@ -9,7 +11,7 @@ from statistics import mean
 # =========================
 
 DATA_DIR = "data"
-TOLERANCE = 0.20  # ±20%
+TOLERANCE = 0.20
 
 SUPPLIERS = {
     "equip": "equip.xlsx",
@@ -20,40 +22,25 @@ SUPPLIERS = {
     "trade_design": "td.xlsx",
 }
 
-COLUMNS_ORDER = [
-    "№",
-    "Источник",
-    "Артикул",
-    "Наименование",
-    "Нужно",
-    "На складе",
-    "Цена дилерская",
-    "Валюта",
-    "Цена розничная",
-    "Валюта",
-    "Цена Entero",
-    "Разница %",
-    "Наценка %",
-    "Валовая прибыль",
-    "Сумма",
-    "Размеры (Ш×Г×В)",
-    "Вес (кг)",
-    "Объём (м³)",
-    "Ссылка",
+ENTERO_BASE = "https://entero.ru"
+
+COLUMNS = [
+    "№","Источник","Артикул","Наименование","Нужно","На складе",
+    "Цена дилерская","Валюта","Цена розничная","Валюта",
+    "Цена Entero","Разница %","Наценка %","Валовая прибыль",
+    "Сумма","Размеры (Ш×Г×В)","Вес (кг)","Объём (м³)","Ссылка"
 ]
 
 # =========================
-# ВСПОМОГАТЕЛЬНОЕ
+# БАЗОВОЕ
 # =========================
 
 def fail(msg):
-    print(f"❌ ОШИБКА: {msg}")
+    print(f"❌ {msg}")
     sys.exit(1)
 
-
-def normalize(text):
-    return re.sub(r"\s+", " ", re.sub(r"[^\w\s×x]", " ", str(text).lower())).strip()
-
+def normalize(t):
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s×x]", " ", str(t).lower())).strip()
 
 def extract_numbers(text):
     patterns = {
@@ -68,10 +55,8 @@ def extract_numbers(text):
             out[k] = float(m.group(1).replace(",", "."))
     return out
 
-
-def within(v1, v2):
-    return v1 * (1 - TOLERANCE) <= v2 <= v1 * (1 + TOLERANCE)
-
+def within(a, b):
+    return a * (1 - TOLERANCE) <= b <= a * (1 + TOLERANCE)
 
 # =========================
 # ЗАПРОС МЕНЕДЖЕРА
@@ -83,20 +68,18 @@ def read_query():
         fail("MANAGER_QUERY не задан")
     return q.strip()
 
-
 def parse_query(q):
-    norm = normalize(q)
+    n = normalize(q)
     return {
         "raw": q,
-        "type": norm.split()[0],
-        "numbers": extract_numbers(norm),
-        "qty": int(re.search(r"(\d+)\s*шт", norm).group(1)) if re.search(r"\d+\s*шт", norm) else None,
-        "allow_analogs": "аналог" in norm,
+        "type": n.split()[0],
+        "numbers": extract_numbers(n),
+        "qty": int(re.search(r"(\d+)\s*шт", n).group(1)) if re.search(r"\d+\s*шт", n) else None,
+        "allow_analogs": "аналог" in n,
     }
 
-
 # =========================
-# ЗАГРУЗКА ПРАЙСОВ
+# ПРАЙСЫ
 # =========================
 
 def load_prices():
@@ -109,16 +92,10 @@ def load_prices():
             items.append({
                 "source": src,
                 "row": r.to_dict(),
-                "text": text,
                 "norm": normalize(text),
                 "nums": extract_numbers(normalize(text)),
             })
     return items
-
-
-# =========================
-# ПОИСК
-# =========================
 
 def search(parsed, items):
     found = []
@@ -134,24 +111,43 @@ def search(parsed, items):
             found.append(it)
     return found
 
-
 def choose(found, allow_analogs):
-    if not found:
-        return []
     found.sort(key=lambda x: len(x["nums"]), reverse=True)
     return found[:3] if allow_analogs else found[:1]
 
-
 # =========================
-# ИЗВЛЕЧЕНИЕ ФАКТОВ
+# ENTERO.RU
 # =========================
 
-def pick(row, *keys):
-    for k in keys:
-        if k in row and row[k]:
-            return row[k]
-    return ""
+def fetch_entero(model_text):
+    try:
+        search_url = f"{ENTERO_BASE}/search/?q={model_text.replace(' ', '+')}"
+        r = requests.get(search_url, timeout=20)
+        if r.status_code != 200:
+            return None
 
+        soup = BeautifulSoup(r.text, "lxml")
+        card = soup.select_one("a.product-card__title")
+        if not card:
+            return None
+
+        link = ENTERO_BASE + card.get("href")
+        page = requests.get(link, timeout=20)
+        soup = BeautifulSoup(page.text, "lxml")
+
+        price_tag = soup.select_one(".price__current")
+        price = (
+            float(price_tag.text.replace(" ", "").replace("₽", ""))
+            if price_tag else None
+        )
+
+        return {
+            "price": price,
+            "link": link
+        }
+
+    except Exception:
+        return None
 
 # =========================
 # ТАБЛИЦА КП
@@ -159,106 +155,64 @@ def pick(row, *keys):
 
 def build_table(results, parsed):
     rows = []
-    totals = {
-        "qty": 0,
-        "profit": 0,
-        "sum": 0,
-        "weight": 0,
-        "volume": 0,
-        "diff": [],
-        "markup": [],
-    }
+    totals = {"qty":0,"profit":0,"sum":0,"markup":[]}
 
     for i, r in enumerate(results, 1):
         row = r["row"]
+        name = row.get("Наименование") or row.get("Название") or ""
+        entero = fetch_entero(name)
 
-        dealer = float(pick(row, "Цена дилерская", "Цена")) if pick(row, "Цена дилерская", "Цена") else None
-        retail = float(pick(row, "Цена розничная")) if pick(row, "Цена розничная") else None
+        dealer = float(row.get("Цена дилерская") or 0) if row.get("Цена дилерская") else None
+        retail = float(row.get("Цена розничная") or 0) if row.get("Цена розничная") else None
         qty = parsed["qty"]
 
         profit = retail - dealer if dealer and retail else None
         total = retail * qty if retail and qty else None
+        markup = ((retail - dealer)/dealer*100) if dealer and retail else None
 
-        diff = ((retail - None) / None * 100) if False else None
-        markup = ((retail - dealer) / dealer * 100) if dealer and retail else None
-
-        if qty:
-            totals["qty"] += qty
-        if profit:
-            totals["profit"] += profit
-        if total:
-            totals["sum"] += total
-        if markup is not None:
-            totals["markup"].append(markup)
+        if qty: totals["qty"] += qty
+        if profit: totals["profit"] += profit
+        if total: totals["sum"] += total
+        if markup: totals["markup"].append(markup)
 
         rows.append([
-            i,
-            r["source"],
-            pick(row, "Артикул", "Код"),
-            pick(row, "Наименование", "Название"),
+            i, r["source"], row.get("Артикул",""), name,
             qty if qty else "–",
-            pick(row, "Остаток", "Наличие", "Под заказ"),
-            dealer if dealer else "",
-            "RUB" if dealer else "",
-            retail if retail else "",
-            "RUB" if retail else "",
-            "",
-            "",
-            round(markup, 2) if markup is not None else "",
-            profit if profit else "",
-            total if total else "",
-            "",
-            "",
-            "",
-            "",
+            row.get("Остаток",""),
+            dealer or "", "RUB" if dealer else "",
+            retail or "", "RUB" if retail else "",
+            entero["price"] if entero else "❌ Не найдено",
+            "", round(markup,2) if markup else "",
+            profit or "", total or "",
+            "", "", "",
+            entero["link"] if entero else ""
         ])
 
-    # ИТОГО
     rows.append([
-        "ИТОГО",
-        "",
-        "",
-        "",
-        totals["qty"] if totals["qty"] else "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        round(mean(totals["markup"]), 2) if totals["markup"] else "",
-        totals["profit"] if totals["profit"] else "",
-        totals["sum"] if totals["sum"] else "",
-        "",
-        "",
-        "",
-        "",
+        "ИТОГО","","","",
+        totals["qty"],"","","","","","",
+        "", round(mean(totals["markup"]),2) if totals["markup"] else "",
+        totals["profit"], totals["sum"],
+        "","","",""
     ])
 
     return rows
 
-
-# =========================
-# ВЫВОД
-# =========================
-
 def print_table(rows):
     print("\n```")
-    print("\t".join(COLUMNS_ORDER))
+    print("\t".join(COLUMNS))
     for r in rows:
-        print("\t".join(map(str, r)))
+        print("\t".join(map(str,r)))
     print("```")
     print("\n✅ Подбор оборудования готов")
-
 
 # =========================
 # MAIN
 # =========================
 
 def main():
-    query = read_query()
-    parsed = parse_query(query)
+    q = read_query()
+    parsed = parse_query(q)
     items = load_prices()
     found = search(parsed, items)
     chosen = choose(found, parsed["allow_analogs"])
@@ -270,7 +224,6 @@ def main():
 
     table = build_table(chosen, parsed)
     print_table(table)
-
 
 if __name__ == "__main__":
     main()
