@@ -10,6 +10,7 @@ import re
 
 DATA_DIR = "data"
 INDEX_DB_PATH = "index.db"
+TOLERANCE = 0.20  # ±20%
 
 SUPPLIERS = {
     "equip": "equip.xlsx",
@@ -93,6 +94,28 @@ def extract_numbers(text: str):
     return result
 
 
+def parse_manager_query(query: str):
+    normalized = normalize_text(query)
+
+    allow_analogs = "аналог" in normalized
+
+    numbers = extract_numbers(normalized)
+
+    equipment_type = normalized.split()[0] if normalized else ""
+
+    print("\n🔎 Разбор запроса:")
+    print(f"• Тип оборудования: {equipment_type}")
+    print(f"• Числовые параметры: {numbers}")
+    print(f"• Аналоги разрешены: {'ДА' if allow_analogs else 'НЕТ'}")
+
+    return {
+        "raw": query,
+        "type": equipment_type,
+        "numbers": numbers,
+        "allow_analogs": allow_analogs,
+    }
+
+
 # =========================
 # ЗАГРУЗКА ПРАЙСОВ
 # =========================
@@ -107,24 +130,20 @@ def load_price_file(supplier: str, filename: str):
         fail(f"Ошибка чтения {filename}: {e}")
 
     df = df.fillna("")
-
     items = []
 
     for _, row in df.iterrows():
-        name = row.to_string()
+        row_text = " ".join(map(str, row.values))
+        normalized = normalize_text(row_text)
+        numbers = extract_numbers(normalized)
 
-        normalized_name = normalize_text(name)
-        numbers = extract_numbers(normalized_name)
-
-        item = {
+        items.append({
             "supplier": supplier,
-            "raw_row": row.to_dict(),
-            "name": row.to_string(),
-            "normalized_name": normalized_name,
+            "row": row.to_dict(),
+            "text": row_text,
+            "normalized": normalized,
             "numbers": numbers,
-        }
-
-        items.append(item)
+        })
 
     print(f"✅ {supplier}: загружено {len(items)} позиций")
     return items
@@ -134,11 +153,52 @@ def load_all_prices():
     all_items = []
 
     for supplier, filename in SUPPLIERS.items():
-        items = load_price_file(supplier, filename)
-        all_items.extend(items)
+        all_items.extend(load_price_file(supplier, filename))
 
     print(f"📦 Всего позиций загружено: {len(all_items)}")
     return all_items
+
+
+# =========================
+# УМНЫЙ ПОИСК (ШАГ 5)
+# =========================
+
+def within_tolerance(requested, actual):
+    return requested * (1 - TOLERANCE) <= actual <= requested * (1 + TOLERANCE)
+
+
+def smart_search(parsed_query, items):
+    matches = []
+
+    for item in items:
+        ok = True
+
+        # Тип оборудования
+        if parsed_query["type"] and parsed_query["type"] not in item["normalized"]:
+            ok = False
+
+        # Числовые характеристики
+        for key, req_val in parsed_query["numbers"].items():
+            actual = item["numbers"].get(key)
+            if actual is None or not within_tolerance(req_val, actual):
+                ok = False
+                break
+
+        if ok:
+            matches.append(item)
+
+    print(f"\n🔍 Найдено совпадений: {len(matches)}")
+    return matches
+
+
+def choose_results(matches, allow_analogs):
+    if not matches:
+        return []
+
+    # Чем больше совпавших характеристик — тем лучше
+    matches.sort(key=lambda x: len(x["numbers"]), reverse=True)
+
+    return matches[:3] if allow_analogs else matches[:1]
 
 
 # =========================
@@ -152,13 +212,28 @@ def main():
     check_environment()
     query = read_manager_query()
 
+    parsed_query = parse_manager_query(query)
+
     print("\n📥 Загрузка прайсов поставщиков")
     all_items = load_all_prices()
 
-    print("\n🧠 Поисковый слой подготовлен")
-    print("ℹ️ Следующий шаг — умный поиск по характеристикам")
+    print("\n🧠 Выполняется умный поиск")
+    matches = smart_search(parsed_query, all_items)
+    results = choose_results(matches, parsed_query["allow_analogs"])
 
-    print("\n✅ ШАГ 4 УСПЕШНО ЗАВЕРШЁН")
+    if not results:
+        print("❌ Не найдено ни одной позиции по заданным характеристикам")
+        print("✅ Подбор оборудования готов")
+        return
+
+    print("\n🎯 РЕЗУЛЬТАТ ПОДБОРА:")
+    for i, item in enumerate(results, 1):
+        tag = "АНАЛОГ" if parsed_query["allow_analogs"] and i > 1 else "ОСНОВНОЙ"
+        print(f"\n#{i} [{tag}] Поставщик: {item['supplier']}")
+        print(item["text"][:300], "...")
+
+    print("\n✅ ШАГ 5 УСПЕШНО ЗАВЕРШЁН")
+    print("✅ Подбор оборудования готов")
 
 
 if __name__ == "__main__":
