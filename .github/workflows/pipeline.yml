@@ -29,7 +29,9 @@ jobs:
             openpyxl \
             xlrd==2.0.1 \
             requests \
-            beautifulsoup4
+            beautifulsoup4 \
+            fastapi \
+            uvicorn
 
       - name: Run orchestrator
         env:
