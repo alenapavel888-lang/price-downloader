@@ -2,6 +2,8 @@ import os
 import sys
 import pandas as pd
 import re
+import requests
+from bs4 import BeautifulSoup
 from statistics import mean
 
 # =========================
@@ -26,6 +28,10 @@ COLUMNS = [
     "Сумма","Размеры (Ш×Г×В)","Вес (кг)","Объём (м³)","Ссылка"
 ]
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
+
 # =========================
 # УТИЛИТЫ
 # =========================
@@ -37,9 +43,9 @@ def fail(msg):
 def normalize(t):
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s×x]", " ", str(t).lower())).strip()
 
-def extract_price(val):
+def to_float(v):
     try:
-        return float(str(val).replace(",", "."))
+        return float(str(v).replace(",", "."))
     except:
         return None
 
@@ -71,74 +77,113 @@ def load_prices():
     return rows
 
 # =========================
-# ПОИСК (УЖЕ ОТФИЛЬТРОВАННЫЙ РАНЕЕ)
+# ПОИСК У ПОСТАВЩИКОВ
 # =========================
 
-def simple_match(query, items):
+def find_best_match(query, items):
     q = normalize(query)
     matches = []
     for it in items:
         if q.split()[0] in it["text"]:
             matches.append(it)
-    return matches
+
+    if not matches:
+        return None
+
+    # минимальная дилерская цена
+    def dealer_price(it):
+        r = it["row"]
+        return to_float(r.get("Цена дилерская") or r.get("Дилерская цена")) or 1e12
+
+    return min(matches, key=dealer_price)
+
+# =========================
+# ENTERO.RU (ШАГ 10)
+# =========================
+
+def search_entero(name):
+    query = "+".join(name.split())
+    url = f"https://entero.ru/search/?q={query}"
+
+    r = requests.get(url, headers=HEADERS, timeout=20)
+    if r.status_code != 200:
+        return None
+
+    soup = BeautifulSoup(r.text, "html.parser")
+    cards = soup.select("a.catalog-item__name")
+
+    if not cards:
+        return None
+
+    best = cards[0]
+    link = "https://entero.ru" + best.get("href")
+
+    # карточка
+    page = requests.get(link, headers=HEADERS, timeout=20)
+    if page.status_code != 200:
+        return None
+
+    s = BeautifulSoup(page.text, "html.parser")
+
+    price_tag = s.select_one(".product-buy__price")
+    price = to_float(price_tag.text) if price_tag else None
+
+    return {
+        "price": price,
+        "link": link
+    }
 
 # =========================
 # ТАБЛИЦА КП
 # =========================
 
-def build_table(matches, need_qty):
-    table = []
-    profits = []
-    sums = []
+def build_table(item, entero, qty):
+    r = item["row"]
 
-    for i, it in enumerate(matches, start=1):
-        r = it["row"]
+    dealer = to_float(r.get("Цена дилерская") or r.get("Дилерская цена"))
+    retail = to_float(r.get("Цена розничная") or r.get("Розничная цена"))
 
-        dealer = extract_price(r.get("Цена дилерская") or r.get("Дилерская цена"))
-        retail = extract_price(r.get("Цена розничная") or r.get("Розничная цена"))
+    markup = ((retail - dealer) / dealer * 100) if dealer and retail else None
+    profit = (retail - dealer) if dealer and retail else None
+    total = (retail * qty) if retail and qty else None
 
-        markup = ((retail - dealer) / dealer * 100) if dealer and retail else None
-        profit = (retail - dealer) if dealer and retail else None
-        total = (retail * need_qty) if retail and need_qty else None
+    diff = None
+    arrow = ""
+    if entero and entero["price"] and retail:
+        diff = (retail - entero["price"]) / entero["price"] * 100
+        arrow = "⬆" if entero["price"] > retail else "⬇"
 
-        if profit is not None:
-            profits.append(profit)
-        if total is not None:
-            sums.append(total)
+    table = [[
+        1,
+        item["source"],
+        r.get("Артикул",""),
+        r.get("Наименование",""),
+        qty or "–",
+        r.get("Наличие",""),
+        dealer or "",
+        "RUB" if dealer else "",
+        retail or "",
+        "RUB" if retail else "",
+        f'{entero["price"]}{arrow}' if entero and entero["price"] else "❌ Не найдено",
+        f"{diff:+.0f}" if diff is not None else "",
+        f"{markup:.0f}" if markup else "",
+        f"{profit:.0f}" if profit else "",
+        f"{total:.0f}" if total else "",
+        "",
+        "",
+        "",
+        entero["link"] if entero else ""
+    ]]
 
-        table.append([
-            i,
-            it["source"],
-            r.get("Артикул",""),
-            r.get("Наименование",""),
-            need_qty if need_qty else "–",
-            r.get("Наличие",""),
-            dealer or "",
-            "RUB" if dealer else "",
-            retail or "",
-            "RUB" if retail else "",
-            "",
-            "",
-            f"{markup:.0f}" if markup else "",
-            f"{profit:.0f}" if profit else "",
-            f"{total:.0f}" if total else "",
-            "",
-            "",
-            "",
-            ""
-        ])
-
-    # ИТОГО
     table.append([
-        "ИТОГО","","","",
-        need_qty if need_qty else "",
+        "ИТОГО","","","",qty or "",
         "",
         "","","","",
         "",
         "",
-        f"{mean([float(x[11]) for x in table if x[11]]) :.0f}" if any(x[11] for x in table) else "",
-        f"{sum(profits):.0f}" if profits else "",
-        f"{sum(sums):.0f}" if sums else "",
+        "",
+        f"{profit:.0f}" if profit else "",
+        f"{total:.0f}" if total else "",
         "","","",""
     ])
 
@@ -164,9 +209,9 @@ def main():
     query = read_query()
     items = load_prices()
 
-    matches = simple_match(query, items)
+    best = find_best_match(query, items)
 
-    if not matches:
+    if not best:
         print("❌ Не найдено ни у одного поставщика")
         print("```")
         print("\t".join(COLUMNS))
@@ -175,7 +220,9 @@ def main():
         print("✅ Подбор оборудования готов")
         return
 
-    table = build_table(matches[:1], None)
+    entero = search_entero(best["row"].get("Наименование",""))
+
+    table = build_table(best, entero, None)
     print_table(table)
 
 if __name__ == "__main__":
