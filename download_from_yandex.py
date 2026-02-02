@@ -6,61 +6,74 @@ YANDEX_API = "https://cloud-api.yandex.net/v1/disk"
 TOKEN = os.getenv("YANDEX_TOKEN")
 
 if not TOKEN:
-    raise RuntimeError("❌ YANDEX_TOKEN не найден в окружении")
+    raise RuntimeError("❌ YANDEX_TOKEN не найден в GitHub Secrets")
 
-HEADERS = {"Authorization": f"OAuth {TOKEN}"}
+HEADERS = {
+    "Authorization": f"OAuth {TOKEN}"
+}
 
-BASE_REMOTE_DIR = "/prices"
-BASE_LOCAL_DIR = Path("data")
+# ЧЁТКО ЗАДАННЫЕ ФАЙЛЫ НА ЯНДЕКС.ДИСКЕ
+FILES = {
+    "equip": {
+        "remote": "/prices/equip/equip.xlsx",
+        "local": "data/equip.xlsx",
+    },
+    "bio": {
+        "remote": "/prices/bio/bio.xlsx",
+        "local": "data/bio.xlsx",
+    },
+    "rosholod": {
+        "remote": "/prices/rosholod/rosholod.xls",
+        "local": "data/rosholod.xls",
+    },
+    "rp": {
+        "remote": "/prices/rp/p.xls",
+        "local": "data/rp.xls",
+    },
+    "smirnov": {
+        "remote": "/prices/smirnov/smirnov.xlsx",
+        "local": "data/smirnov.xlsx",
+    },
+    "trade_design": {
+        "remote": "/prices/trade_design/td.xlsx",
+        "local": "data/td.xlsx",
+    },
+}
 
-SUPPLIERS = [
-    "equip",
-    "bio",
-    "rosholod",
-    "rp",
-    "smirnov",
-    "trade_design",
-]
-
-def api_get(url, params=None):
-    r = requests.get(url, headers=HEADERS, params=params)
+def get_download_link(path: str) -> str:
+    r = requests.get(
+        f"{YANDEX_API}/resources/download",
+        headers=HEADERS,
+        params={"path": path},
+    )
     r.raise_for_status()
-    return r.json()
+    return r.json()["href"]
 
-def download_file(remote_path: str, local_path: Path):
-    meta = api_get(f"{YANDEX_API}/resources/download", {"path": remote_path})
-    url = meta["href"]
-    with requests.get(url, stream=True) as r:
-        r.raise_for_status()
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(local_path, "wb") as f:
-            for chunk in r.iter_content(8192):
-                f.write(chunk)
+def download_file(remote_path: str, local_path: str):
+    print(f"⬇️  Скачиваем: {remote_path}")
 
-def download_folder(remote_folder: str, local_folder: Path):
-    items = api_get(
-        f"{YANDEX_API}/resources",
-        {"path": remote_folder, "limit": 1000}
-    )["embedded"]["items"]
+    url = get_download_link(remote_path)
 
-    for item in items:
-        if item["type"] != "file":
-            continue
-        name = item["name"]
-        remote_path = item["path"]
-        local_path = local_folder / name
-        print(f"⬇️  {remote_path}")
-        download_file(remote_path, local_path)
+    r = requests.get(url, stream=True)
+    r.raise_for_status()
+
+    local_path = Path(local_path)
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(local_path, "wb") as f:
+        for chunk in r.iter_content(chunk_size=8192):
+            f.write(chunk)
+
+    print(f"✅ Готово: {local_path}")
 
 def main():
-    for supplier in SUPPLIERS:
-        print(f"\n📦 Поставщик: {supplier}")
-        download_folder(
-            f"{BASE_REMOTE_DIR}/{supplier}",
-            BASE_LOCAL_DIR / supplier
-        )
+    print("🔗 Подключение к Яндекс.Диску")
 
-    print("\n✅ Все прайсы загружены из Яндекс.Диска")
+    for name, cfg in FILES.items():
+        print(f"\n📦 Поставщик: {name}")
+        download_file(cfg["remote"], cfg["local"])
+
+    print("\n🎉 Все прайсы успешно скачаны")
 
 if __name__ == "__main__":
     main()
