@@ -27,7 +27,7 @@ FILES = {
         "local": "data/rosholod.xls",
     },
     "rp": {
-        "remote": "/prices/rp/p.xls",
+        "remote": "/prices/rp/rp.xls",
         "local": "data/rp.xls",
     },
     "smirnov": {
