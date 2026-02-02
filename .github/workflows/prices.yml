@@ -1,47 +1,37 @@
 name: Update price lists
 
 on:
-  schedule:
-    - cron: "0 20 * * *"
   workflow_dispatch:
 
 jobs:
-  update:
+  update-prices:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
-          pip install --upgrade pip
-          pip install \
-            requests \
-            yadisk \
-            playwright \
-            pandas \
-            xlrd==2.0.1 \
-            openpyxl \
-            lxml
-          playwright install chromium
+          pip install pandas openpyxl xlrd requests beautifulsoup4
 
-      - name: Run price downloader
+      - name: Download prices from Yandex Disk
         env:
           YANDEX_TOKEN: ${{ secrets.YANDEX_TOKEN }}
-          RP_LOGIN: ${{ secrets.RP_LOGIN }}
-          RP_PASSWORD: ${{ secrets.RP_PASSWORD }}
-          BIO_LOGIN: ${{ secrets.BIO_LOGIN }}
-          BIO_PASSWORD: ${{ secrets.BIO_PASSWORD }}
-          TD_API_TOKEN: ${{ secrets.TD_API_TOKEN }}
-
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         run: |
-          python download_all.py
+          python download_from_yandex.py
+
+      - name: Build index.db
+        run: |
+          python build_index.py
+
+      - name: Commit index.db
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add data index.db
+          git commit -m "Update prices and rebuild index" || echo "No changes"
+          git push
