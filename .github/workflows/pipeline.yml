@@ -9,7 +9,7 @@ on:
         default: "мясорубка 70 кг"
 
 jobs:
-  run-orchestrator:
+  run:
     runs-on: ubuntu-latest
 
     steps:
@@ -24,14 +24,45 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install \
-            pandas \
-            openpyxl \
-            xlrd==2.0.1 \
-            requests \
-            beautifulsoup4 \
-            fastapi \
-            uvicorn
+          pip install pandas openpyxl xlrd requests beautifulsoup4
+
+      # 🔽 ВАЖНО: скачиваем прайсы с Яндекс Диска
+      - name: Download price lists from Yandex Disk
+        env:
+          YANDEX_TOKEN: ${{ secrets.YANDEX_TOKEN }}
+        run: |
+          mkdir -p data
+          python << 'EOF'
+          import requests, os
+
+          TOKEN = os.environ["YANDEX_TOKEN"]
+          HEADERS = {"Authorization": f"OAuth {TOKEN}"}
+
+          FILES = {
+              "equip.xlsx": "/price-lists/equip.xlsx",
+              "bio.xlsx": "/price-lists/bio.xlsx",
+              "rp.xlsx": "/price-lists/rp.xlsx",
+              "rosholod.xlsx": "/price-lists/rosholod.xlsx",
+              "smirnov.xlsx": "/price-lists/smirnov.xlsx",
+              "td.xlsx": "/price-lists/td.xlsx",
+          }
+
+          for local, remote in FILES.items():
+              url = "https://cloud-api.yandex.net/v1/disk/resources/download"
+              r = requests.get(url, headers=HEADERS, params={"path": remote})
+              r.raise_for_status()
+              download_url = r.json()["href"]
+
+              data = requests.get(download_url).content
+              with open(f"data/{local}", "wb") as f:
+                  f.write(data)
+
+              print(f"✅ Скачан {local}")
+          EOF
+
+      - name: Build index.db
+        run: |
+          python build_index.py
 
       - name: Run orchestrator
         env:
