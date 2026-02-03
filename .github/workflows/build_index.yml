@@ -1,10 +1,14 @@
 name: Build search index
 
 on:
-  workflow_dispatch:
+  workflow_run:
+    workflows: ["Update price lists"]
+    types:
+      - completed
 
 jobs:
   build-index:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -16,20 +20,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libreoffice
-
-      - name: Install Python dependencies
+      - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install \
-            requests \
-            pandas \
-            openpyxl \
-            xlrd==2.0.1 \
-            yadisk
+          pip install pandas openpyxl xlrd==2.0.1
 
       - name: Build index.db
         env:
