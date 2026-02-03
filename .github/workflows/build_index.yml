@@ -16,12 +16,24 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice
+
+      - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install pandas openpyxl xlrd==2.0.1
+          pip install \
+            requests \
+            pandas \
+            openpyxl \
+            xlrd==2.0.1 \
+            yadisk
 
       - name: Build index.db
+        env:
+          YANDEX_TOKEN: ${{ secrets.YANDEX_TOKEN }}
         run: |
           python build_index.py
 
