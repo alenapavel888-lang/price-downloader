@@ -1,15 +1,18 @@
 import sqlite3
 import re
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, Query
 from typing import List
 
 DB_PATH = "index.db"
 
-app = FastAPI(title="Equipment Selector API")
+app = FastAPI(
+    title="Smart Equipment Agent",
+    description="Умный подбор оборудования и цен",
+    version="1.0"
+)
 
 # =========================
-# UTILITIES
+# УТИЛИТЫ
 # =========================
 
 def normalize(text: str) -> str:
@@ -18,140 +21,133 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 def extract_numbers(text: str):
-    nums = []
-    for m in re.findall(r"(\d+(?:[.,]\d+)?)\s*(кг|kg|л|l|мм|см|cm|м)?", text.lower()):
-        nums.append((float(m[0].replace(",", ".")), m[1] or ""))
+    nums = {}
+    patterns = {
+        "kg": r"(\d+(?:[.,]\d+)?)\s*кг",
+        "liters": r"(\d+(?:[.,]\d+)?)\s*л",
+        "levels": r"(\d+)\s*уров",
+        "kw": r"(\d+(?:[.,]\d+)?)\s*квт",
+    }
+    for k, p in patterns.items():
+        m = re.search(p, text)
+        if m:
+            nums[k] = float(m.group(1).replace(",", "."))
     return nums
 
 # =========================
-# INPUT SCHEMA
+# ГЛАВНАЯ СТРАНИЦА
 # =========================
 
-class SearchRequest(BaseModel):
-    query: str
-    quantity: int | None = None
-    allow_analogs: bool = False
+@app.get("/")
+def root():
+    return {
+        "status": "ok",
+        "message": "Smart Equipment Agent is running",
+        "endpoints": [
+            "/search?q=мясорубка 70 кг",
+        ]
+    }
 
 # =========================
-# CORE SEARCH
+# ПОИСК
 # =========================
 
-def search_items(query: str, allow_analogs: bool):
+@app.get("/search")
+def search(
+    q: str = Query(..., description="Запрос менеджера"),
+    limit: int = 5
+):
+    query_raw = q
+    query_norm = normalize(q)
+    tokens = query_norm.split()
+    numbers = extract_numbers(query_norm)
+
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    q_norm = normalize(query)
-    tokens = q_norm.split()
-    numbers = extract_numbers(query)
+    # ---- SQL поиск по токенам
+    placeholders = ",".join("?" * len(tokens))
 
-    sql = """
-    SELECT items.item_id, items.source, items.article, items.name_raw
-    FROM items
-    JOIN tokens ON tokens.item_id = items.item_id
-    WHERE tokens.token IN ({})
-    GROUP BY items.item_id
-    ORDER BY COUNT(tokens.token) DESC
-    LIMIT {}
-    """.format(
-        ",".join("?" * len(tokens)),
-        3 if allow_analogs else 1
-    )
+    sql = f"""
+    SELECT i.item_id, i.source, i.article, i.name_raw
+    FROM items i
+    JOIN tokens t ON t.item_id = i.item_id
+    WHERE t.token IN ({placeholders})
+    GROUP BY i.item_id
+    ORDER BY COUNT(*) DESC
+    LIMIT ?
+    """
 
-    rows = cur.execute(sql, tokens).fetchall()
+    rows = cur.execute(sql, (*tokens, limit)).fetchall()
     conn.close()
-    return rows
 
-# =========================
-# TABLE BUILDER
-# =========================
+    # ---- Формирование таблицы
+    columns = [
+        "№","Источник","Запрос","Артикул","Наименование",
+        "Нужно","На складе",
+        "Цена дилерская","Валюта",
+        "Цена розничная","Валюта",
+        "Цена Entero","Разница %",
+        "Наценка %","Валовая прибыль",
+        "Сумма",
+        "Размеры (Ш×Г×В)",
+        "Вес (кг)","Объём (м³)",
+        "Ссылка"
+    ]
 
-COLUMNS = [
-    "№","Источник","Запрос","Артикул","Наименование","Нужно","На складе",
-    "Цена дилерская","Валюта","Цена розничная","Валюта",
-    "Цена Entero","Разница %","Наценка %","Валовая прибыль",
-    "Сумма","Размеры (Ш×Г×В)","Вес (кг)","Объём (м³)","Ссылка"
-]
+    table = []
+    n = 1
 
-def build_table(items, query, qty):
-    rows = []
-    total_qty = 0
-    total_sum = 0
-    total_profit = 0
-
-    for i, it in enumerate(items, 1):
-        retail = 0
-        dealer = 0
-
-        profit = retail - dealer
-        summa = retail * (qty or 1)
-
-        total_qty += qty or 1
-        total_sum += summa
-        total_profit += profit
-
-        rows.append([
-            i,
-            it["source"],
-            query,
-            it["article"],
-            it["name_raw"],
-            qty or "–",
+    for r in rows:
+        table.append([
+            n,
+            r["source"],
+            query_raw,
+            r["article"],
+            r["name_raw"],
             "–",
-            dealer or "",
-            "RUB",
-            retail or "",
-            "RUB",
+            "",
+            "",
+            "",
+            "",
+            "",
             "❌ Не найдено",
             "",
             "",
-            profit or "",
-            summa or "",
+            "",
+            "",
             "",
             "",
             "",
             ""
         ])
+        n += 1
 
-    output = []
-    output.append("\t".join(COLUMNS))
-    for r in rows:
-        output.append("\t".join(map(str, r)))
-
-    output.append("\t".join([
-        "ИТОГО","","","",
-        "",
-        total_qty,
+    # ---- Итоговая строка
+    table.append([
+        "ИТОГО","","","","",
+        "","","","","",
         "",
         "",
         "",
         "",
         "",
         "",
-        "",
-        "",
-        total_profit,
-        total_sum,
         "",
         "",
         "",
         ""
-    ]))
+    ])
 
-    return "```\n" + "\n".join(output) + "\n```"
+    # ---- Plain text output
+    lines = []
+    lines.append("\t".join(columns))
+    for row in table:
+        lines.append("\t".join(map(str, row)))
 
-# =========================
-# API ENDPOINT
-# =========================
-
-@app.post("/search")
-def search(req: SearchRequest):
-    items = search_items(req.query, req.allow_analogs)
-
-    if not items:
-        return {
-            "result": "```\n❌ Ничего не найдено\n```"
-        }
-
-    table = build_table(items, req.query, req.quantity)
-    return {"result": table}
+    return {
+        "query": query_raw,
+        "rows_found": len(rows),
+        "table": "```\\n" + "\\n".join(lines) + "\\n```"
+    }
