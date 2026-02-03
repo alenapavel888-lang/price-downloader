@@ -23,7 +23,11 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install pandas openpyxl xlrd==2.0.1
+          pip install \
+            yadisk \
+            pandas \
+            openpyxl \
+            xlrd==2.0.1
 
       - name: Build index.db
         env:
