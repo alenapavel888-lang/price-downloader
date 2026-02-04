@@ -1,6 +1,7 @@
 import os
-import subprocess
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form
+from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 app = FastAPI(
@@ -10,46 +11,42 @@ app = FastAPI(
 )
 
 # =========================
-# МОДЕЛЬ ЗАПРОСА
+# STATIC FILES (web.html)
 # =========================
+app.mount(
+    "/",
+    StaticFiles(directory="static", html=True),
+    name="static"
+)
 
+# =========================
+# API MODELS
+# =========================
 class SearchRequest(BaseModel):
     query: str
 
 
 # =========================
-# ENDPOINT
+# API ENDPOINTS
 # =========================
 
-@app.post("/search")
-def search(req: SearchRequest):
-    if not req.query.strip():
-        raise HTTPException(status_code=400, detail="Пустой запрос")
+@app.post("/search", response_class=PlainTextResponse)
+async def search(
+    query: str = Form(""),
+    file: UploadFile | None = File(None)
+):
+    """
+    Принимает:
+    - текстовый запрос
+    - файл (xlsx / csv / txt)
+    Возвращает:
+    - plain-text таблицу (заглушка, пока без логики)
+    """
 
-    env = os.environ.copy()
-    env["MANAGER_QUERY"] = req.query.strip()
+    lines = []
+    lines.append("Источник\tЗапрос\tАртикул\tНаименование\tНужно\tЦена розничная")
+    lines.append("TEST\t" + query.replace("\n", " | ") + "\t-\t-\t-\t-")
+    lines.append("")
+    lines.append("ИТОГО\t\t\t\t\t")
 
-    try:
-        result = subprocess.run(
-            ["python", "orchestrator.py"],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=120
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    return {
-        "query": req.query,
-        "output": result.stdout,
-        "errors": result.stderr
-    }
-
-
-@app.get("/")
-def root():
-    return {
-        "status": "ok",
-        "message": "Price Orchestrator API работает"
-    }
+    return "\n".join(lines)
