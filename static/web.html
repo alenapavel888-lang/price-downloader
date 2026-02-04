@@ -1,1 +1,122 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Подбор оборудования — Price Orchestrator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f6f7f9;
+            margin: 0;
+            padding: 30px;
+        }
+        h1 {
+            margin-bottom: 5px;
+        }
+        .box {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 900px;
+            margin: auto;
+            box-shadow: 0 10px 25px rgba(0,0,0,.05);
+        }
+        textarea {
+            width: 100%;
+            min-height: 160px;
+            padding: 10px;
+            font-size: 14px;
+        }
+        input[type="file"] {
+            margin-top: 10px;
+        }
+        button {
+            margin-top: 20px;
+            padding: 12px 25px;
+            font-size: 16px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #1e40af;
+        }
+        pre {
+            background: #0f172a;
+            color: #e5e7eb;
+            padding: 15px;
+            margin-top: 25px;
+            overflow: auto;
+            font-size: 13px;
+            border-radius: 8px;
+        }
+        .hint {
+            color: #555;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="box">
+    <h1>🧠 Подбор оборудования</h1>
+    <div class="hint">
+        Введите текст, список, ссылки или загрузите файл — система всё обработает.
+    </div>
+
+    <textarea id="query" placeholder="
+Пример:
+Мясорубка 300 кг — 2 шт
+Стол нержавейка 1200х600
+https://entero.ru/product/...
+"></textarea>
+
+    <input type="file" id="file" />
+
+    <br>
+
+    <button onclick="send()">Рассчитать</button>
+
+    <pre id="result">Результат появится здесь…</pre>
+</div>
+
+<script>
+async function send() {
+    const text = document.getElementById("query").value;
+    const fileInput = document.getElementById("file");
+    const result = document.getElementById("result");
+
+    result.textContent = "⏳ Обработка запроса...";
+
+    let payload = {
+        query: text
+    };
+
+    try {
+        const res = await fetch("/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+            result.textContent = "Ошибка: " + (data.detail || "неизвестно");
+            return;
+        }
+
+        result.textContent = data.table || "❌ Ничего не найдено";
+
+    } catch (e) {
+        result.textContent = "Ошибка соединения с сервером";
+    }
+}
+</script>
+
+</body>
+</html>
 
