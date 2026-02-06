@@ -1,7 +1,7 @@
-import os
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+import os
 
 app = FastAPI(
     title="Price Orchestrator API",
@@ -10,17 +10,25 @@ app = FastAPI(
 )
 
 # =========================
-# STATIC (WEB UI)
+# STATIC FILES
 # =========================
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+
+# =========================
+# WEB UI (МЕНЕДЖЕР)
+# =========================
 @app.get("/", response_class=HTMLResponse)
-def web_ui():
+def manager_ui():
+    """
+    Главная страница менеджера
+    """
     with open("static/web.html", "r", encoding="utf-8") as f:
         return f.read()
 
+
 # =========================
-# SEARCH ENDPOINT (AGENT)
+# AGENT SEARCH API
 # =========================
 @app.post("/api/search", response_class=PlainTextResponse)
 async def search(
@@ -28,18 +36,17 @@ async def search(
     file: UploadFile | None = File(None)
 ):
     """
-    Это точка входа АГЕНТА.
-    Сюда будет подключён orchestrator.py
+    Точка входа агента
     """
 
-    lines = []
-    lines.append(
+    rows = []
+    rows.append(
         "№\tИсточник\tЗапрос\tАртикул\tНаименование\tНужно\tНа складе\tЦена розничная"
     )
-    lines.append(
+    rows.append(
         f"1\tTEST\t{query.replace(chr(10), ' | ')}\t-\t-\t-\t-\t-"
     )
-    lines.append("")
-    lines.append("ИТОГО\t\t\t\t\t\t\t")
+    rows.append("")
+    rows.append("ИТОГО\t\t\t\t\t\t\t")
 
-    return "\n".join(lines)
+    return "\n".join(rows)
