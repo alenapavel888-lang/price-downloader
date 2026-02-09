@@ -23,30 +23,41 @@ def manager_ui():
     """
     Главная страница менеджера
     """
-    with open("static/web.html", "r", encoding="utf-8") as f:
+    path = os.path.join("static", "web.html")
+    if not os.path.exists(path):
+        return "<h1>❌ Файл static/web.html не найден</h1>"
+    with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
 
 # =========================
-# AGENT SEARCH API
+# SEARCH API
 # =========================
-@app.post("/api/search", response_class=PlainTextResponse)
+@app.post("/search", response_class=PlainTextResponse)
 async def search(
     query: str = Form(""),
     file: UploadFile | None = File(None)
 ):
     """
-    Точка входа агента
+    Принимает:
+    - текст
+    - файл (xlsx / csv / txt)
+    Возвращает:
+    - plain text таблицу (пока заглушка)
     """
 
-    rows = []
-    rows.append(
-        "№\tИсточник\tЗапрос\tАртикул\tНаименование\tНужно\tНа складе\tЦена розничная"
+    lines = []
+    lines.append(
+        "Источник\tЗапрос\tАртикул\tНаименование\tНужно\tЦена розничная"
     )
-    rows.append(
-        f"1\tTEST\t{query.replace(chr(10), ' | ')}\t-\t-\t-\t-\t-"
-    )
-    rows.append("")
-    rows.append("ИТОГО\t\t\t\t\t\t\t")
 
-    return "\n".join(rows)
+    if query:
+        lines.append(f"TEST\t{query.replace(chr(10), ' | ')}\t-\t-\t-\t-")
+
+    if file:
+        lines.append(f"FILE\t{file.filename}\t-\t-\t-\t-")
+
+    lines.append("")
+    lines.append("ИТОГО\t\t\t\t\t")
+
+    return "\n".join(lines)
